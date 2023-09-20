@@ -1,0 +1,98 @@
+# An example of running a commandline-based job by yaml.
+
+# To set up a job, the user needs to specify `cmd` and `hp_dict`. Optionally,
+# the user can provide additional
+# arguments`rl_nexus.hp_tuning_tools.submit_xt_job.submit_xt_job` takes. To run
+# the job, go to the `rl_nexus` directory and then run `python
+# hp_tuning_tools/submit_xt_job.py <job_yaml_file>`.
+
+
+### Code setup
+# The commandline to execute. At run time, the hyperparameter will be passed as
+# extra options to `cmd`. For example, if there is a hyperparameter named X with
+# value 1.0. Then the full commandline executed in `code_dir` is `$cmd --X 1.0`.
+# If `cmd` saves results, for syncing, please save them to
+# the `results` directory in dilbert. (like the example below).
+cmd: python -W ignore train_representation_mt_dist.py
+arg_template: '{}={}'
+
+
+# # (optional) A directory or a list of directories to upload
+# code_paths:  # A path AAA/BBB/CCC will be uploaded as rl_nexus/CCC
+#   - ~/codes/llm/robomimic-hitl
+
+# (optional) This should be a relative path wrt rl_nexus. If not provided, it
+# uses the first directory in code_paths by default. Otherwise, it uses rl_nexus.
+code_dir: temporary-codebase  # TODO: change this when the codebase is ready.
+
+
+# (optional) Commandlines to set up the code.
+setup_cmds:   # This starts from the `dilbert` directory.
+
+  ################ install mujoco210
+  - sudo apt-get install -y libglew-dev patchelf libosmesa6-dev
+  - wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
+  - tar -xf mujoco210-linux-x86_64.tar.gz
+  - rm mujoco210-linux-x86_64.tar.gz
+  - mkdir ~/.mujoco
+  - mv mujoco210 ~/.mujoco
+  - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin:/usr/lib/nvidia
+  ################
+  - cd rl_nexus/
+  # install cgo
+  - git clone https://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@github.com/FrankZheng2022/temporary-codebase
+  - cd temporary-codebase
+  # - . install.sh
+  - pip install -r requirements_210.txt
+  - pip install -e metaworld
+  - pip freeze
+  - pip install gym==0.26.2
+  - cd .. # back to rl_nexus
+  - cd .. # back to dilbert
+
+### Hyperparameter setting
+# A dict that specifies the values of hyperparameters to search over.
+hps_dict:
+  feature_dim: [100]
+  n_code: [10]
+  nstep: [3]
+  pcgrad: [true]
+  exp_name: [test]
+  replay_buffer_num_workers: [2]
+  batch_size: [128]
+  save_snapshot: [true]
+  obs_dependent: [true]
+  port: [12235]
+  stage: [1]
+  # seed: [1,2,3]
+
+# (optional) A dict that specifies the default values of hyperparameters. This
+# is meant to overwrite the default hyperparameter used in the method.
+# Therefore, this is optional, and keys here do not necessary have to appear in
+# `hps_dict` (vice versa)
+config:
+  # seed: randint  # keys here do not need to appear in hps_dict
+  # 'randint' is a reserved phrase, which would generate random seeds at runtime.
+  data_storage_dir: $datastore/taa_data/offline_data_test/   # TODO: change this when we have the real data
+  log_dir: ../../results
+
+n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
+
+### (optional) Compute resources
+
+# compute_target: azb-westus2
+# vm_size: Standard_NC4as_T4_v3
+
+# compute_target: sing-msrresrchvc-V100
+compute_target: sing-msrresrchvc-P100
+# compute_target: sing-msrresrchvc-P40
+# compute_target: sing-msrrlvc-T4 # Name of the compute resource.
+
+docker_image: nexus-gpu # Name of the Docker image.
+max_n_nodes: 100 # Maximal number of nodes to launch in the job.
+# max_total_runs: 3000 # Maximal number of runs in the job.
+# n_sequential_runs_per_node: 1  # Number of sequential runs per node.
+# n_concurrent_runs_per_node: 1  # Number of concurrent runs per node.
+# low_priority: False  # Whether the job can is preemptible.
+# hold: False # whether the nodes should be released automatically (hold=False) after the job completes.
+remote_run: True  # Set False to debug locally.

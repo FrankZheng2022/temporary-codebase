@@ -74,10 +74,10 @@ agent:
   nstep: ${nstep}
   obs_dependent: ${obs_dependent}
 
-
+log_dir: ./exp_local/${exp_name}
 hydra:
   run:
-    dir: ./exp_local/${exp_name}
+    dir: ${log_dir}
   sweep:
     dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
     subdir: ${hydra.job.num}

@@ -1,0 +1,74 @@
+defaults:
+  - _self_
+  - task@_global_: quadruped_walk
+  - override hydra/launcher: submitit_local
+
+domain: metaworld
+r3m: false
+quantize: false
+n_code: 20
+taco: true
+offline_data_dir: ???
+num_train_steps: 100000
+trunk: true
+# task settings
+frame_stack: 3
+action_repeat: 2
+discount: 0.99
+# snapshot
+save_snapshot: true
+# replay buffer
+replay_buffer_size: 100000000
+replay_buffer_num_workers: 4
+nstep: 3
+batch_size: 256
+# misc
+seed: 1
+device: cuda
+use_tb: false
+# experiment
+experiment: exp
+# agent
+lr: 1e-4
+feature_dim: 50
+exp_name: default
+reward: false
+multistep: 1
+spr: false
+curl: true
+target: taco_representation.TACORepresentation
+  
+agent:
+  _target_: ${target}
+  obs_shape: ??? # to be specified later
+  action_shape: ??? # to be specified later
+  device: ${device}
+  lr: ${lr}
+  hidden_dim: 1024
+  feature_dim: ${feature_dim}
+  reward: ${reward}
+  multistep: ${multistep}
+  spr: ${spr}
+  curl: ${curl}
+  trunk: ${trunk}
+  quantize: ${quantize}
+  n_code: ${n_code}
+  r3m: ${r3m}
+  taco: ${taco}
+
+
+hydra:
+  run:
+    dir: ./exp_local/${exp_name}
+  sweep:
+    dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
+    subdir: ${hydra.job.num}
+  launcher:
+    timeout_min: 4300
+    cpus_per_task: 10
+    gpus_per_node: 1
+    tasks_per_node: 1
+    mem_gb: 160
+    nodes: 1
+    submitit_folder: ./exp/${now:%Y.%m.%d}/${now:%H%M%S}_${agent_cfg.experiment}/.slurm
+

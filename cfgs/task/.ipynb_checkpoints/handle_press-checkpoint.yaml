@@ -1,0 +1,6 @@
+defaults:
+  - medium
+  - _self_
+
+task_name: handle-press
+domain: metaworld

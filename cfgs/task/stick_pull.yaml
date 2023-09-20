@@ -1,0 +1,7 @@
+defaults:
+  - medium
+  - metaworld
+  - _self_
+
+task_name: stick-pull
+domain: metaworld

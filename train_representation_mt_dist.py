@@ -92,7 +92,7 @@ class Workspace:
             for task_name in self.cfg.task_names:
     
                 #offline_data_dir = '/mount_point/offline_data_mw/{}_expert500'.format(task_name)
-                offline_data_dir = '/mount_point/offline_data_mw/offline_data_test/{}_expert5'.format(task_name)
+                offline_data_dir = '{}/{}_expert5'.format(self.cfg.data_storage_dir, task_name) #'/mount_point/offline_data_mw/offline_data_test/'
                 offline_data_dirs.append(Path(offline_data_dir))
         
         else:

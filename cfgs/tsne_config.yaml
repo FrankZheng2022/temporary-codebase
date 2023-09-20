@@ -1,0 +1,102 @@
+
+defaults:
+  - _self_
+  - task@_global_: quadruped_walk
+  - override hydra/launcher: submitit_local
+
+offline_data_dirs: ['/fs/cml-projects/taco_rl/offline_data/acrobot_swingup_replay', 
+'/fs/cml-projects/taco_rl/offline_data/finger_turn_hard_replay',
+'/fs/cml-projects/taco_rl/offline_data/hopper_stand_replay',
+'/fs/cml-projects/taco_rl/offline_data/walker_run_replay',
+'/fs/cml-projects/taco_rl/offline_data/quadruped_walk_replay',
+'/fs/cml-projects/taco_rl/offline_data/humanoid_stand_replay',
+'/fs/cml-projects/taco_rl/offline_data/dog_walk_replay']
+plot_name: ???
+num_traj: 50
+tsne_iter: 250
+
+domain: dmc
+use_augmentation: false
+freeze_encoder: false
+r3m: false
+act_quantizer_dir: none
+eval_freq: 1000
+offline_data_dir: ???
+encoder_dir: none
+num_train_steps: 50000
+pcgrad: true
+bn: false
+trunk: true
+
+# task settings
+frame_stack: 3
+action_repeat: 2
+discount: 0.99
+# train settings
+num_seed_frames: 0
+# eval
+eval_every_frames: 10000
+num_eval_episodes: 10
+# snapshot
+save_snapshot: true
+# replay buffer
+replay_buffer_size: 100000000
+replay_buffer_num_workers: 4
+nstep: 3
+batch_size: 256
+# misc
+seed: 1
+device: cuda
+save_video: false
+save_train_video: false
+use_tb: false
+# experiment
+experiment: exp
+# agent
+lr: 1e-4
+encoder_lr: 1e-4
+feature_dim: 50
+exp_name: default
+inv: false
+reward: true
+temporal: false
+multistep: 1
+lars: false
+drqv2: false
+spr: false
+curl: true
+target: bc.BCAgent
+mse: true
+  
+agent:
+  _target_: ${target}
+  obs_shape: ??? # to be specified later
+  action_shape: ??? # to be specified later
+  device: ${device}
+  lr: ${lr}
+  encoder_lr: ${encoder_lr}
+  feature_dim: ${feature_dim}
+  hidden_dim: 1024
+  use_tb: ${use_tb}
+  r3m: ${r3m}
+  freeze_encoder: ${freeze_encoder}
+  use_augmentation: ${use_augmentation}
+  bn: ${bn}
+  trunk: ${trunk}
+  mse: ${mse}
+
+hydra:
+  run:
+    dir: ./exp_local/${exp_name}
+  sweep:
+    dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
+    subdir: ${hydra.job.num}
+  launcher:
+    timeout_min: 4300
+    cpus_per_task: 10
+    gpus_per_node: 1
+    tasks_per_node: 1
+    mem_gb: 160
+    nodes: 1
+    submitit_folder: ./exp/${now:%Y.%m.%d}/${now:%H%M%S}_${agent_cfg.experiment}/.slurm
+

@@ -1,0 +1,91 @@
+defaults:
+  - _self_
+  - task@_global_: quadruped_walk
+  - override hydra/launcher: submitit_local
+
+task_names: ['pick-place-wall', 'push']
+# task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push']
+
+# task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
+
+train_multitask_bc: false
+stage: 1
+pcgrad: false
+n_code: 200
+vocab_size: 200
+num_eval_episodes: 100
+eval_freq: 10000
+port: 12235
+obs_dependent: false
+reinit_metapolicy: false
+offline_data_dir: none
+cuda_offset: 0
+min_frequency: 5
+max_token_length: 20
+
+
+exp_bc_name: default
+
+
+taco: true
+r3m: false
+num_train_steps: 100000
+trunk: true
+# task settings
+frame_stack: 3
+action_repeat: 2
+discount: 0.99
+# snapshot
+save_snapshot: true
+# replay buffer
+replay_buffer_size: 100000000
+replay_buffer_num_workers: 4
+nstep: 3
+batch_size: 256
+# misc
+seed: 1
+device: cuda
+use_tb: false
+# experiment
+experiment: exp
+# agent
+lr: 1e-4
+feature_dim: 100
+hidden_dim: 1024
+exp_name: default
+spr: false
+target: taco_representation_mt.TACORepresentation
+  
+agent:
+  _target_: ${target}
+  obs_shape: ??? # to be specified later
+  action_dim: ??? # to be specified later
+  device: ${device}
+  lr: ${lr}
+  hidden_dim: ${hidden_dim}
+  feature_dim: ${feature_dim}
+  spr: ${spr}
+  trunk: ${trunk}
+  r3m: ${r3m}
+  pcgrad: ${pcgrad}
+  n_code: ${n_code}
+  vocab_size: ${vocab_size}
+  nstep: ${nstep}
+  obs_dependent: ${obs_dependent}
+
+
+hydra:
+  run:
+    dir: ./exp_local/${exp_name}
+  sweep:
+    dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
+    subdir: ${hydra.job.num}
+  launcher:
+    timeout_min: 4300
+    cpus_per_task: 10
+    gpus_per_node: 1
+    tasks_per_node: 1
+    mem_gb: 160
+    nodes: 1
+    submitit_folder: ./exp/${now:%Y.%m.%d}/${now:%H%M%S}_${agent_cfg.experiment}/.slurm
+

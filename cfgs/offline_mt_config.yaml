@@ -1,0 +1,103 @@
+
+defaults:
+  - _self_
+  - task@_global_: quadruped_walk
+  - override hydra/launcher: submitit_local
+
+# task_names: [pendulum_swingup, cartpole_balance, cartpole_swingup, cup_catch, finger_spin, acrobot_swingup, hopper_stand, hopper_hop, cheetah_run, walker_walk, walker_run, quadruped_walk, quadruped_run, humanoid_walk, dog_walk]
+
+task_names: [cup_catch, finger_spin, finger_turn_hard, acrobot_swingup,reacher_easy, hopper_stand, hopper_hop, cheetah_run, walker_walk, walker_run, quadruped_walk, quadruped_run, humanoid_stand, humanoid_walk, dog_walk, dog_trot]
+
+#[cartpole_swingup, cup_catch, finger_spin, acrobot_swingup, hopper_stand, hopper_hop, cheetah_run, walker_walk, walker_run, quadruped_walk, quadruped_run, humanoid_walk, humanoid_run, dog_walk, dog_trot]
+
+offline_data_dirs: ['/fs/cml-projects/taco_rl/offline_data/cup_catch_expert200', '/fs/cml-projects/taco_rl/offline_data/finger_spin_expert200', '/fs/cml-projects/taco_rl/offline_data/finger_turn_expert200', '/fs/cml-projects/taco_rl/offline_data/acrobot_swingup_expert500', '/fs/cml-projects/taco_rl/offline_data/reacher_easy_expert200', '/fs/cml-projects/taco_rl/offline_data/hopper_stand_expert200', '/fs/cml-projects/taco_rl/offline_data/hopper_hop_expert200', '/fs/cml-projects/taco_rl/offline_data/cheetah_run_expert200', '/fs/cml-projects/taco_rl/offline_data/walker_walk_expert200', '/fs/cml-projects/taco_rl/offline_data/walker_run_expert500', '/fs/cml-projects/taco_rl/offline_data/quadruped_walk_expert200', '/fs/cml-projects/taco_rl/offline_data/quadruped_run_expert200', '/fs/cml-projects/taco_rl/offline_data/humanoid_stand_expert500', '/fs/cml-projects/taco_rl/offline_data/humanoid_walk_expert500', '/fs/cml-projects/taco_rl/offline_data/dog_walk_expert200',
+'/fs/cml-projects/taco_rl/offline_data/dog_trot_expert500']
+
+# offline_data_dirs: ['/fs/cml-projects/taco_rl/offline_data/pendulum_swingup_expert200', '/fs/cml-projects/taco_rl/offline_data/cartpole_balance_expert200', '/fs/cml-projects/taco_rl/offline_data/cartpole_swingup_expert200', '/fs/cml-projects/taco_rl/offline_data/cup_catch_expert200', '/fs/cml-projects/taco_rl/offline_data/finger_spin_expert200', '/fs/cml-projects/taco_rl/offline_data/acrobot_swingup_expert200', '/fs/cml-projects/taco_rl/offline_data/hopper_stand_expert200', '/fs/cml-projects/taco_rl/offline_data/hopper_hop_expert200', '/fs/cml-projects/taco_rl/offline_data/cheetah_run_expert200', '/fs/cml-projects/taco_rl/offline_data/walker_walk_expert200', '/fs/cml-projects/taco_rl/offline_data/walker_run_expert200', '/fs/cml-projects/taco_rl/offline_data/quadruped_walk_expert200', '/fs/cml-projects/taco_rl/offline_data/quadruped_run_expert200', '/fs/cml-projects/taco_rl/offline_data/humanoid_walk_expert200', '/fs/cml-projects/taco_rl/offline_data/dog_walk_expert200']
+#['/fs/cml-projects/taco_rl/offline_data/pendulum_swingup_expert200', '/fs/cml-projects/taco_rl/offline_data/cartpole_balance_expert200']
+
+bn: False
+mse: True
+trunk: True
+pcgrad: true
+use_augmentation: false
+freeze_encoder: false
+r3m: false
+encoder_dir: none
+eval_freq: 5000
+num_train_steps: 100000
+
+# task settings
+frame_stack: 3
+action_repeat: 2
+discount: 0.99
+# train settings
+num_seed_frames: 0
+# eval
+eval_every_frames: 10000
+num_eval_episodes: 10
+# snapshot
+save_snapshot: false
+save_encoder: false
+# replay buffer
+replay_buffer_size: 100000000
+replay_buffer_num_workers: 4
+nstep: 3
+batch_size: 256
+# misc
+seed: 1
+device: cuda
+save_video: false
+save_train_video: false
+use_tb: false
+# experiment
+experiment: exp
+# agent
+lr: 1e-4
+encoder_lr: 1e-4
+feature_dim: 50
+exp_name: default
+inv: false
+reward: true
+temporal: false
+multistep: 1
+lars: false
+drqv2: false
+spr: false
+curl: true
+target: bc_multitask.BCAgent
+  
+agent:
+  _target_: ${target}
+  obs_shape: ??? # to be specified later
+  action_dim: ??? # to be specified later
+  action_indices: ??? # to be specified later
+  task_names: ${task_names}
+  device: ${device}
+  lr: ${lr}
+  feature_dim: ${feature_dim}
+  hidden_dim: 1024
+  use_tb: ${use_tb}
+  r3m: ${r3m}
+  freeze_encoder: ${freeze_encoder}
+  use_augmentation: ${use_augmentation}
+  pcgrad: ${pcgrad}
+  bn: ${bn}
+  trunk: ${trunk}
+  mse: ${mse}
+
+hydra:
+  run:
+    dir: ./exp_local/${exp_name}
+  sweep:
+    dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
+    subdir: ${hydra.job.num}
+  launcher:
+    timeout_min: 4300
+    cpus_per_task: 10
+    gpus_per_node: 1
+    tasks_per_node: 1
+    mem_gb: 160
+    nodes: 1
+    submitit_folder: ./exp/${now:%Y.%m.%d}/${now:%H%M%S}_${agent_cfg.experiment}/.slurm
+

@@ -40,7 +40,7 @@ setup_cmds:   # This starts from the `dilbert` directory.
   ################
   - cd rl_nexus/
   # install cgo
-  - git clone https://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@github.com/FrankZheng2022/temporary-codebase
+  - git clone https://$GITHUB_TOKEN@github.com/FrankZheng2022/temporary-codebase
   - cd temporary-codebase
   # - . install.sh
   - pip install -r requirements_210.txt

@@ -92,7 +92,8 @@ class ReplayBuffer(IterableDataset):
     def __init__(self, replay_dir, max_size, num_workers, nstep,
                  discount, fetch_every, save_snapshot, 
                  rank=None, world_size=None,
-                 n_code=None, vocab_size=None):
+                 n_code=None, vocab_size=None,
+                 min_frequency=None, max_token_length=None):
         self._replay_dir = replay_dir if type(replay_dir) == list else [replay_dir]
         self._size = 0
         self._max_size = max_size
@@ -108,6 +109,8 @@ class ReplayBuffer(IterableDataset):
         self.world_size = world_size
         self.vocab_size = vocab_size
         self.n_code    = n_code
+        self.min_frequency = min_frequency 
+        self.max_token_length = max_token_length
         print('Loading Data into CPU Memory')
         self._preload()
 
@@ -200,7 +203,7 @@ class ReplayBuffer(IterableDataset):
             next_obs_lst.append(episode['observation'][idx + i])
         #next_obs_lst = np.vstack(next_obs_lst)
         if self.vocab_size is not None:
-            tok = episode['code{}_vocab{}'.format(self.n_code, self.vocab_size)][idx]
+            tok = episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.n_code, self.vocab_size, self.min_frequency, self.max_token_length)][idx]
             return (obs, action, tok, reward, discount, next_obs, next_obs_lst)
         else:
             return (obs, action, action_seq, reward, discount, next_obs, next_obs_lst)
@@ -218,7 +221,8 @@ def _worker_init_fn(worker_id):
 
 def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
                        save_snapshot, nstep, discount, n_code=None, 
-                       vocab_size=None):
+                       vocab_size=None, min_frequency=None, 
+                        max_token_length=None):
     max_size_per_worker = max_size // max(1, num_workers)
     
     iterable = ReplayBuffer(replay_dir,
@@ -229,7 +233,9 @@ def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
                             fetch_every=1000,
                             save_snapshot=save_snapshot,
                             n_code=n_code,
-                            vocab_size=vocab_size)
+                            vocab_size=vocab_size,
+                            min_frequency=min_frequency, 
+                            max_token_length=max_token_length)
 
     loader = torch.utils.data.DataLoader(iterable,
                                          batch_size=batch_size,
@@ -240,7 +246,8 @@ def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
 
 def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
                        save_snapshot, nstep, discount, rank, world_size, 
-                        n_code=None, vocab_size=None):
+                        n_code=None, vocab_size=None, min_frequency=None, 
+                        max_token_length=None):
     max_size_per_worker = max_size // max(1, num_workers)
     
     iterable = ReplayBuffer(replay_dir,
@@ -253,7 +260,9 @@ def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
                             rank=rank,
                             world_size=world_size,
                             n_code=n_code,
-                            vocab_size=vocab_size)
+                            vocab_size=vocab_size,
+                            min_frequency=min_frequency, 
+                            max_token_length=max_token_length)
 
     loader = torch.utils.data.DataLoader(iterable,
                                          batch_size=batch_size,
@@ -261,6 +270,7 @@ def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
                                          pin_memory=False,
                                          worker_init_fn=_worker_init_fn)
     return loader
+ 
  
 
 

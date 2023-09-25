@@ -24,12 +24,13 @@ import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, gather
-#from bpe import compute_pair_freqs, merge_pair, tokenize
+from bpe import compute_pair_freqs, merge_pair, tokenize
 from collections import defaultdict
 import copy
 import pickle
 import io
 import torch.nn.functional as F
+from tokenizer_api import Tokenizer
 
 torch.backends.cudnn.benchmark = True
 
@@ -91,8 +92,7 @@ class Workspace:
         if len(self.cfg.task_names) > 1:
             for task_name in self.cfg.task_names:
     
-                #offline_data_dir = '/mount_point/offline_data_mw/{}_expert500'.format(task_name)
-                offline_data_dir = '{}/{}_expert5'.format(self.cfg.data_storage_dir, task_name) #'/mount_point/offline_data_mw/offline_data_test/'
+                offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
                 offline_data_dirs.append(Path(offline_data_dir))
         
         else:
@@ -114,14 +114,16 @@ class Workspace:
                     offline_data_dirs, self.cfg.replay_buffer_size,
                     self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
                     True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
-                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size)
+                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
+                    min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
         else:
             #print('Create Data Loader')
             self.replay_loader = make_replay_loader_dist(
                     [Path(self.cfg.offline_data_dir)], self.cfg.replay_buffer_size,
                     self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
                     True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
-                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size)
+                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
+                    min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
 
         print('Finish Reading Data') 
         self._replay_iter = None
@@ -156,6 +158,7 @@ class Workspace:
                 assert False
             #codes = self.vocab[meta_action].split('C')[1:]
             #code_buffer = [int(i) for i in codes]
+            #code_buffer = [meta_action]    
         
         code_selected = code_buffer.pop(0)
         learned_code  = self.agent.TACO.module.a_quantizer.embedding.weight
@@ -229,7 +232,7 @@ class Workspace:
                 step += 1
             episode += 1
 
-        #print(success/self.cfg.num_eval_episodes)
+        print('Success Rate:{}'.format(success/self.cfg.num_eval_episodes*100))
         self.performance.append(success/self.cfg.num_eval_episodes*100)
         eval_dir = self.work_dir / 'eval'
         eval_dir.mkdir(exist_ok=True)
@@ -263,11 +266,10 @@ class Workspace:
             metrics = self.agent.update(self.replay_iter, self.global_step)
             self.logger.log_metrics(metrics, self.global_step, ty='train')
 
-
+    
     def train_bpe(self):
         self.agent.TACO.train(False)
         task_list = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
-        #task_list = ['assembly', 'basketball']
         lst_traj = []
         for task in task_list:
             path = Path("/mount_point/offline_data_mw/{}_expert500".format(task))
@@ -292,170 +294,89 @@ class Workspace:
             u = self.agent.TACO.module.action_encoder(z, action)
             _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
             min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
-            #min_encoding_indices = ['C' + str(idx) for idx in min_encoding_indices]
             min_encoding_indices = [int(idx) for idx in min_encoding_indices]
             corpus.append(min_encoding_indices)
             traj_names.append(str(f))
         print('=========Offline Data Tokenized!==========')
-        
-        with open('/mount_point/temporal_action_abstraction/vocab_mt45_obs_dependent_code{}.pkl'.format(self.cfg.n_code), 'wb') as f:
-            pickle.dump([traj_names, corpus], f)
-        assert False
-        
-        from tokenizer_api import Tokenizer
+
         tokenizer = Tokenizer(algo='bpe', vocab_size=self.cfg.vocab_size)
-        self.tokenizer = tokenizer
         tokenizer.train(corpus, min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length, verbose=True)
-        token_to_length = lambda token_id: len(tokenizer.decode([token_id], verbose=False))
-        token_to_code = lambda token_id: tokenizer.decode([token_id], verbose=False)[0]
+
+        # vocab_dir = self.work_dir / 'vocab'
+        # vocab_dir.mkdir(exist_ok=True)
+        # with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
+        #     pickle.dump([tokenizer, corpus, traj_names], f)
+        with open('/mount_point/temporal_action_abstraction/hand_insert_expert5.pkl', 'wb') as f:
+            pickle.dump(corpus, f)
+            assert False
+
+        #### Tokenize Trajectories from 5 Unseen Takss
+        lst_traj = []
+        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
+        for task in task_list:
+            for seed in range(4):
+                path = Path("/mount_point/offline_data_mw/{}_expert3_{}".format(task, seed+1))
+                lst_traj.extend(list(sorted(path.glob('*.npz'))))
+
+        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
+        for task in task_list:
+            for seed in range(4):
+                path = Path("/mount_point/offline_data_mw/{}_expert5_{}".format(task, seed+1))
+                lst_traj.extend(list(sorted(path.glob('*.npz'))))
+
+        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
+        for task in task_list:
+            for seed in range(4):
+                path = Path("/mount_point/offline_data_mw/{}_expert10_{}".format(task, seed+1))
+                lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
-        self.agent.encoder.eval()
-        meta_policy = DDP(nn.Sequential(
+        ### Rewrite the trajectory with BPE generated vocabulary
+        for f in lst_traj:
+            try:
+                with np.load(f) as e:
+                    episode = dict(e)
+            except:
+                #print(f)
+                continue
+            with torch.no_grad():
+                obs, action = episode['observation'], episode['action']
+                obs = torch.from_numpy(obs).to(self.device)
+                action = torch.from_numpy(action).to(self.device)
+                z = self.agent.encoder(obs.float())
+                u = self.agent.TACO.module.action_encoder(z, action)
+                _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
+                min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
+                min_encoding_indices = [int(idx) for idx in min_encoding_indices]
+    
+            #traj_tok = utils.tokenize_vocab(min_encoding_indices, vocab_lookup, merges)
+            traj_tok = [tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] - 1 for t in range(obs.shape[0])]
+            traj_tok =  np.array(traj_tok, dtype=np.int64).reshape(len(traj_tok), -1)
+            episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.cfg.n_code, self.cfg.vocab_size, 
+                                                                 self.cfg.min_frequency, self.cfg.max_token_length)] = traj_tok
+            utils.save_episode(episode, f)
+
+    
+    def train_metapolicy(self):
+        metrics = None
+        with open(self.work_dir / 'vocab' / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'rb') as f:
+            loaded_data = pickle.load(f)
+            self.tokenizer, corpus, traj_names = loaded_data
+
+        self.agent.train(False)
+        meta_policy = nn.Sequential(
             nn.Linear(self.cfg.feature_dim, self.cfg.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.cfg.hidden_dim, tokenizer.vocab_size)
-        ).to(self.device))
+            nn.Linear(self.cfg.hidden_dim, self.tokenizer.vocab_size - 1)
+        ).to(self.device)
         meta_policy.train(True)
         meta_policy.apply(utils.weight_init)
         self.agent.TACO.module.meta_policy = meta_policy
-        self.agent.TACO.module.decoder = DDP(self.agent.TACO.module.decoder)
         self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
-        
+        index_fn = lambda x: self.tokenizer.decode([x+1], verbose=False)[0]
 
-        
-        obs_lst, action_lst, token_lst  = [], [], []
-        counter = 0
-        for f in lst_traj:
-            try:
-                episode = np.load(f)
-            except:
-                continue
-            obs, action = episode['observation'], episode['action']
-
-            for t in range(obs.shape[0]):
-                token_id = tokenizer.encode(corpus[counter][t:], verbose=False)[0]
-                obs_lst.append(obs[t])
-                action_lst.append(action[t])
-                token_lst.append(token_id)
-            counter += 1
-            
-            # traj_token_ids = tokenizer.encode(corpus[counter], verbose=False)
-            # index = 0
-            # for token_id in traj_token_ids:
-            #     obs_lst.append(obs[index])
-            #     action_lst.append(action[index])
-            #     token_lst.append(token_id)
-            #     index += token_to_length(token_id)
-            # counter += 1
-
-        obs_lst = np.array(obs_lst).astype(np.uint8)
-        action_lst = np.array(action_lst).astype(np.float32)
-        token_lst = np.array(token_lst)
-
-        for epoch in range(self.cfg.num_train_steps):
-            index = np.random.choice(len(obs_lst), self.cfg.batch_size//self.world_size, replace=False)
-                                     
-            obs, action, tok = obs_lst[index], action_lst[index], token_lst[index]
-            obs = torch.as_tensor(obs, device=self.device)
-            action = torch.as_tensor(action, device=self.device)
-            tok = torch.as_tensor(tok, device=self.device).reshape(-1) - 1
-            z = self.agent.encoder(self.agent.aug(obs.float()))
-            with torch.no_grad():
-                u = self.agent.TACO.module.action_encoder(z, action)
-                _, u_quantized, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
-                # index = [token_to_code(t) for t in tok]
-                # u_quantized = self.agent.TACO.module.a_quantizer.embedding.weight[index, :]
-                
-            meta_action = self.agent.TACO.module.meta_policy(z.detach())
-            meta_policy_loss = F.cross_entropy(meta_action, tok)
-        
-            decode_action = self.agent.TACO.module.decoder((z + u_quantized).detach())
-            decoder_loss = F.l1_loss(decode_action, action)
-            
-            self.agent.taco_opt.zero_grad()
-            (meta_policy_loss+decoder_loss).backward()
-            self.agent.taco_opt.step()
-            
-            if epoch % 1000 == 0 and self.rank==0:
-                print('DECODER_LOSS:{}, META_POLICY_LOSS:{}'.format(meta_policy_loss, decoder_loss))
-        
-        self.eval_mt45()
-    
-    
-        # print('=========Run BPE==========')
-        # #### BPE Algorithms
-        # word_freqs = defaultdict(int)
-        # alphabet=['C' + str(i) for i in range(self.cfg.n_code)]
-        # vocab = ['C' + str(i) for i in range(self.cfg.n_code)]
-        # splits = {"".join(map(str, word)): [c for c in word] for word in corpus}
-        # merges = {}
-        
-        # while len(vocab) < self.cfg.vocab_size:
-        #     pair_freqs = compute_pair_freqs(vocab, splits)
-        #     best_pair, max_freq = None, None
-        #     for pair, freq in pair_freqs.items():
-        #         if max_freq is None or max_freq < freq:
-        #             best_pair = pair
-        #             max_freq = freq
-        #     if best_pair is None:
-        #         break
-        #     splits = merge_pair(*best_pair, splits)
-        #     merges[best_pair] = best_pair[0] + best_pair[1]
-        #     vocab.append(best_pair[0] + best_pair[1])
-        # vocab_lookup = {vocab[i]: i for i in range(len(vocab))}
-        # print("======Finish Byte-Pair Encoding Vocab Size:{}======".format(self.cfg.vocab_size))
-        
-        # # Save the data to a file using pickle
-        # vocab_dir = self.work_dir / 'vocab'
-        # vocab_dir.mkdir(exist_ok=True)
-        # with open(vocab_dir / 'vocab_mt45_code{}_vocab{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size), 'wb') as f:
-        #     pickle.dump([vocab, merges], f)
-
-
-
-        # ### Add additional trajectory from hold-out tasks into tokenization
-        # task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
-        # for task in task_list:
-        #     for num_demo in [1,5]:
-        #         for seed in range(4):
-        #             for run in range(4):
-        #                 path = Path("/mount_point/offline_data_mw/{}_expert{}_{}_{}".format(task, num_demo, seed+1, run+1))
-        #                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
-        
-        # ### Rewrite the trajectory with BPE generated vocabulary
-        # for f in lst_traj:
-        #     try:
-        #         with np.load(f) as e:
-        #             episode = dict(e)
-        #     except:
-        #         #print(f)
-        #         continue
-        #     with torch.no_grad():
-        #         obs, action = episode['observation'], episode['action']
-        #         obs = torch.from_numpy(obs).to(self.device)
-        #         action = torch.from_numpy(action).to(self.device)
-        #         z = self.agent.encoder(obs.float())
-        #         u = self.agent.TACO.module.action_encoder(z, action)
-        #         _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
-        #         min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
-        #         min_encoding_indices = ['C' + str(idx) for idx in min_encoding_indices]
-    
-        #     traj_tok = utils.tokenize_vocab(min_encoding_indices, vocab_lookup, merges)
-        #     traj_tok =  np.array(traj_tok, dtype=np.int64).reshape(len(traj_tok), -1)
-        #     episode['code{}_vocab{}'.format(self.cfg.n_code, self.cfg.vocab_size)] = traj_tok
-        #     utils.save_episode(episode, f)
-
-    
-    #### Old function (based on non-api tokenizer version)  
-    def train_metapolicy(self):
-        metrics = None
-        with open(self.work_dir / 'vocab' / 'vocab_mt45_code{}_vocab{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size), 'rb') as f:
-            loaded_data = pickle.load(f)
-            self.vocab, self.merges = loaded_data
-        
-        index_fn = lambda x: int(self.vocab[x.item()].split('C')[1])
+        #index_fn = lambda x: int(self.vocab[x.item()].split('C')[1])
         while self.global_step < self.cfg.num_train_steps:
             if self.global_step%1000 == 0 and self.rank == 0:
                 # wait until all the metrics schema is populated
@@ -463,27 +384,19 @@ class Workspace:
                     # log stats
                     print('DECODER_LOSS:{}, META_POLICY_LOSS:{}'.format(metrics['decoder_loss'], metrics['meta_policy_loss'])) 
                     elapsed_time, total_time = self.timer.reset()
-                    with self.logger.log_and_dump_ctx(self.global_step,
-                                                      ty='train') as log:
-                        log('total_time', total_time)
-                        log('step', self.global_step)
 
                 # reset env
                 # try to save snapshot
                 if self.cfg.save_snapshot and self.rank == 0:
                     self.save_snapshot(self.cfg.stage)
-                # if self.global_step%10000 == 0 and self.rank == 0:
-                #     self.save_model()
 
             self._global_step += 1
             metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, index_fn)
-            self.logger.log_metrics(metrics, self.global_step, ty='train')
         
             if self.global_step%self.cfg.eval_freq == 0:
                 if len(self.cfg.task_names) == 1:
                     self.eval_st()
                 else:
-                    
                     self.eval_mt45()
         if self.global_step%self.cfg.eval_freq == 0:
             if len(self.cfg.task_names) == 1:

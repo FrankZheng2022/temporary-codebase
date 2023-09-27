@@ -265,7 +265,7 @@ class Workspace:
         task_list = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
         lst_traj = []
         for task in task_list:
-            path = Path("/mount_point/offline_data_mw/{}_expert500".format(task))
+            path = Path("{}/{}_expert500".format(self.cfg.data_storage_dir, task))
             lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         
@@ -305,19 +305,19 @@ class Workspace:
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert3_{}".format(task, seed+1))
+                path = Path("{}/{}_expert3_{}".format(self.cfg.data_storage_dir, task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
 
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert5_2_{}".format(task, seed+1))
+                path = Path("{}/{}_expert5_2_{}".format(self.cfg.data_storage_dir, task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
 
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert10_{}".format(task, seed+1))
+                path = Path("{}/{}_expert10_{}".format(self.cfg.data_storage_dir, task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         ### Rewrite the trajectory with BPE generated vocabulary

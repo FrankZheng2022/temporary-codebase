@@ -37,6 +37,7 @@ use_tb: false
 experiment: exp
 # agent
 feature_dim: 50
+multistep: 1
 exp_name: default
 
 

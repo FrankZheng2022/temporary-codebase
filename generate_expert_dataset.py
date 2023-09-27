@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from dm_env import specs
 
-import dmc
+#import dmc
 import mw
 from metaworld.policies import *
 import utils

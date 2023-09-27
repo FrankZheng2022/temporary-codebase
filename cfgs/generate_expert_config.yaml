@@ -3,11 +3,14 @@ defaults:
   - task@_global_: quadruped_walk
   - override hydra/launcher: submitit_local
 
+cam_name: corner2
 domain: metaworld
 model_dir: none
 offline_data_dir: none
 num_expert_trajectories: 100
-num_thread: 20
+noise: 0.
+
+
 # task settings
 frame_stack: 3
 action_repeat: 2
@@ -33,45 +36,8 @@ use_tb: false
 # experiment
 experiment: exp
 # agent
-lr: 1e-4
-encoder_lr: 1e-4
 feature_dim: 50
 exp_name: default
-reward: true
-multistep: 1
-drqv2: false
-spr: false
-curl: true
-taco: true
-latent_a_dim: none
-encoder_dir: none
-
-agent:
-  _target_: drqv2.DrQV2Agent
-  obs_shape: ??? # to be specified later
-  action_shape: ??? # to be specified later
-  device: ${device}
-  lr: ${lr}
-  encoder_lr: ${encoder_lr}
-  critic_target_tau: 0.01
-  update_every_steps: 2
-  use_tb: ${use_tb}
-  num_expl_steps: 2000
-  hidden_dim: 1024
-  feature_dim: ${feature_dim}
-  stddev_schedule: ${stddev_schedule}
-  stddev_clip: 0.3
-  reward: ${reward}
-  multistep: ${multistep}
-  latent_a_dim: ${latent_a_dim}
-  drqv2: ${drqv2}
-  spr: ${spr}
-  curl: ${curl}
-  taco: ${taco}
-  domain: ${domain}
-  #inv: false
-  #temporal: false
-  #lars: false
 
 
 hydra:

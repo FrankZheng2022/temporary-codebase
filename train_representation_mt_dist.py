@@ -92,7 +92,7 @@ class Workspace:
         if len(self.cfg.task_names) > 1:
             for task_name in self.cfg.task_names:
     
-                offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
+                #offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
                 offline_data_dirs.append(Path(offline_data_dir))
         
         else:
@@ -149,10 +149,11 @@ class Workspace:
         z = self.agent.encoder(obs.unsqueeze(0))
         
         if len(code_buffer) == 0:
-            ### query the option policy
-            meta_action = self.agent.TACO.module.meta_policy(z).max(-1)[1] + 1
+            ### query the meta/option policy
+            meta_action = self.agent.TACO.module.meta_policy(z).max(-1)[1] 
+            tok = self.idx_to_tok[int(meta_action.item())]
             try:
-                code_buffer = self.tokenizer.decode([int(meta_action.item())], verbose=False)
+                code_buffer = self.tokenizer.decode([tok], verbose=False)
             except:
                 print(meta_action)
                 assert False
@@ -165,14 +166,6 @@ class Workspace:
         u = learned_code[code_selected, :]
         action = self.agent.TACO.module.decoder(z + u)
         return code_buffer, action.detach().cpu().numpy()[0]
-
-        # obs = torch.from_numpy(obs).to(self.device)
-        # z = self.agent.encoder(obs.unsqueeze(0))
-        # meta_action = self.agent.TACO.module.meta_policy(z).max(-1)[1]
-        # learned_code = self.agent.TACO.module.a_quantizer.embedding.weight
-        # u = learned_code[meta_action, :]
-        # action = self.agent.TACO.module.decoder(z + u)
-        # return action.detach().cpu().numpy()[0], []
 
     def eval_mt45(self):
         performance = {}
@@ -302,13 +295,10 @@ class Workspace:
         tokenizer = Tokenizer(algo='bpe', vocab_size=self.cfg.vocab_size)
         tokenizer.train(corpus, min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length, verbose=True)
 
-        # vocab_dir = self.work_dir / 'vocab'
-        # vocab_dir.mkdir(exist_ok=True)
-        # with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
-        #     pickle.dump([tokenizer, corpus, traj_names], f)
-        with open('/mount_point/temporal_action_abstraction/hand_insert_expert5.pkl', 'wb') as f:
-            pickle.dump(corpus, f)
-            assert False
+        vocab_dir = self.work_dir / 'vocab'
+        vocab_dir.mkdir(exist_ok=True)
+        with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
+            pickle.dump([tokenizer, corpus, traj_names], f)
 
         #### Tokenize Trajectories from 5 Unseen Takss
         lst_traj = []
@@ -321,7 +311,7 @@ class Workspace:
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert5_{}".format(task, seed+1))
+                path = Path("/mount_point/offline_data_mw/{}_expert5_2_{}".format(task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
 
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
@@ -349,7 +339,7 @@ class Workspace:
                 min_encoding_indices = [int(idx) for idx in min_encoding_indices]
     
             #traj_tok = utils.tokenize_vocab(min_encoding_indices, vocab_lookup, merges)
-            traj_tok = [tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] - 1 for t in range(obs.shape[0])]
+            traj_tok = [tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
             traj_tok =  np.array(traj_tok, dtype=np.int64).reshape(len(traj_tok), -1)
             episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.cfg.n_code, self.cfg.vocab_size, 
                                                                  self.cfg.min_frequency, self.cfg.max_token_length)] = traj_tok
@@ -362,20 +352,47 @@ class Workspace:
             loaded_data = pickle.load(f)
             self.tokenizer, corpus, traj_names = loaded_data
 
+        #### Tokenizer the given trajectories
+        lst_traj = []
+        path = Path(self.cfg.offline_data_dir)
+        lst_traj= list(sorted(path.glob('*.npz')))
+        self.tok_to_idx = dict()
+        self.idx_to_tok = []
+        for f in lst_traj:
+            with np.load(f) as e:
+                episode = dict(e)
+            with torch.no_grad():
+                obs, action = episode['observation'], episode['action']
+                obs = torch.from_numpy(obs).to(self.device)
+                action = torch.from_numpy(action).to(self.device)
+                z = self.agent.encoder(obs.float())
+                u = self.agent.TACO.module.action_encoder(z, action)
+                _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
+                min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
+                min_encoding_indices = [int(idx) for idx in min_encoding_indices]
+            
+            traj_tok = [self.tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
+            for tok in traj_tok:
+                if not tok in self.tok_to_idx:
+                    self.tok_to_idx[tok] = len(self.tok_to_idx)
+                    self.idx_to_tok.append(tok)
+            
+        
         self.agent.train(False)
         meta_policy = nn.Sequential(
             nn.Linear(self.cfg.feature_dim, self.cfg.hidden_dim),
             nn.ReLU(),
             nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim),
             nn.ReLU(),
-            nn.Linear(self.cfg.hidden_dim, self.tokenizer.vocab_size - 1)
+            nn.Linear(self.cfg.hidden_dim, len(self.tok_to_idx))
         ).to(self.device)
         meta_policy.train(True)
         meta_policy.apply(utils.weight_init)
         self.agent.TACO.module.meta_policy = meta_policy
         self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
-        index_fn = lambda x: self.tokenizer.decode([x+1], verbose=False)[0]
-
+        tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False)[0]
+        tok_to_idx  = lambda tok: self.tok_to_idx[int(tok.item())]
+        
         #index_fn = lambda x: int(self.vocab[x.item()].split('C')[1])
         while self.global_step < self.cfg.num_train_steps:
             if self.global_step%1000 == 0 and self.rank == 0:
@@ -391,7 +408,7 @@ class Workspace:
                     self.save_snapshot(self.cfg.stage)
 
             self._global_step += 1
-            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, index_fn)
+            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx)
         
             if self.global_step%self.cfg.eval_freq == 0:
                 if len(self.cfg.task_names) == 1:
@@ -405,27 +422,27 @@ class Workspace:
                 
                 self.eval_mt45()
     
-    def train_multitask_bc(self):
-        metrics = None
-        while self.global_step < self.cfg.num_train_steps:
-            if self.global_step%100 == 0 and self.rank == 0:
-                # wait until all the metrics schema is populated
-                if metrics is not None:
-                    # log stats
-                    print('DECODER_LOSS:{}'.format(metrics['decoder_loss']))
-                    elapsed_time, total_time = self.timer.reset()
-                    with self.logger.log_and_dump_ctx(self.global_step,
-                                                      ty='train') as log:
-                        log('total_time', total_time)
-                        log('step', self.global_step)
+    # def train_multitask_bc(self):
+    #     metrics = None
+    #     while self.global_step < self.cfg.num_train_steps:
+    #         if self.global_step%100 == 0 and self.rank == 0:
+    #             # wait until all the metrics schema is populated
+    #             if metrics is not None:
+    #                 # log stats
+    #                 print('DECODER_LOSS:{}'.format(metrics['decoder_loss']))
+    #                 elapsed_time, total_time = self.timer.reset()
+    #                 with self.logger.log_and_dump_ctx(self.global_step,
+    #                                                   ty='train') as log:
+    #                     log('total_time', total_time)
+    #                     log('step', self.global_step)
 
-                if self.global_step > 0:
-                    if self.cfg.save_snapshot and self.rank == 0:
-                        self.save_snapshot(1)
+    #             if self.global_step > 0:
+    #                 if self.cfg.save_snapshot and self.rank == 0:
+    #                     self.save_snapshot(1)
 
-            self._global_step += 1
-            metrics = self.agent.update_multitask_bc(self.replay_iter, self.global_step)
-            self.logger.log_metrics(metrics, self.global_step, ty='train')
+    #         self._global_step += 1
+    #         metrics = self.agent.update_multitask_bc(self.replay_iter, self.global_step)
+    #         self.logger.log_metrics(metrics, self.global_step, ty='train')
 
     
     def save_snapshot(self, stage):

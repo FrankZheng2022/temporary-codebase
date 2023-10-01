@@ -24,7 +24,7 @@ import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group, gather
-from bpe import compute_pair_freqs, merge_pair, tokenize
+#from bpe import compute_pair_freqs, merge_pair, tokenize
 from collections import defaultdict
 import copy
 import pickle

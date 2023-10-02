@@ -40,6 +40,7 @@ class ReplayBufferStorage:
         self._data_specs = data_specs
         self._replay_dir = replay_dir
         replay_dir.mkdir(parents=True, exist_ok=True)
+        print(f'THE DESTINATION DIR IS {replay_dir}')
         self._current_episode = defaultdict(list)
         self._preload()
         self.store_only_success = store_only_success

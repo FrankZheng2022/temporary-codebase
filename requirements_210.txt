@@ -22,5 +22,5 @@ matplotlib==3.4.2
 opencv-python==4.5.3.56
 scikit-image
 dm_control
-gym
+gym<=0.25.2
 chardet

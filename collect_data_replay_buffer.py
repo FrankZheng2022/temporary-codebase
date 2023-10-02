@@ -34,8 +34,8 @@ def load_episode(fn):
         episode = {k: episode[k] for k in episode.keys()}
         return episode
 
-
-class CollectReplayBufferStorage:
+        
+class ReplayBufferStorage:
     def __init__(self, data_specs, replay_dir, store_only_success=False):
         self._data_specs = data_specs
         self._replay_dir = replay_dir
@@ -57,7 +57,7 @@ class CollectReplayBufferStorage:
             self._current_episode[spec.name].append(value)
         if time_step['success'] == 1.0:
             self._success = True
-        if time_step.last() or self._success:
+        if time_step.last(): #or self._success:
             episode = dict()
             for spec in self._data_specs:
                 value = self._current_episode[spec.name]
@@ -89,12 +89,9 @@ class CollectReplayBufferStorage:
 
 
 class ReplayBuffer(IterableDataset):
-    def __init__(self, replay_dir, max_size, num_workers, nstep,
-                 discount, fetch_every, save_snapshot, 
-                 rank=None, world_size=None,
-                 n_code=None, vocab_size=None,
-                 min_frequency=None, max_token_length=None):
-        self._replay_dir = replay_dir if type(replay_dir) == list else [replay_dir]
+    def __init__(self, replay_dir, max_size, num_workers, nstep,  multistep, 
+                 discount, fetch_every, save_snapshot):
+        self._replay_dir = replay_dir
         self._size = 0
         self._max_size = max_size
         self._num_workers = max(1, num_workers)
@@ -105,22 +102,14 @@ class ReplayBuffer(IterableDataset):
         self._fetch_every = fetch_every
         self._samples_since_last_fetch = fetch_every
         self._save_snapshot = save_snapshot
-        self.rank = rank
-        self.world_size = world_size
-        self.vocab_size = vocab_size
-        self.n_code    = n_code
-        self.min_frequency = min_frequency 
-        self.max_token_length = max_token_length
+        self._multistep = multistep
         print('Loading Data into CPU Memory')
         self._preload()
 
     def _sample_episode(self):
         eps_fn = random.choice(self._episode_fns)
         return self._episodes[eps_fn]
-    
-    def __len__(self):
-        return self._size
-    
+
     def _store_episode(self, eps_fn):
         try:
             episode = load_episode(eps_fn)
@@ -149,16 +138,11 @@ class ReplayBuffer(IterableDataset):
             worker_id = torch.utils.data.get_worker_info().id
         except:
             worker_id = 0
-
-        eps_fns = []
-        for replay_dir in self._replay_dir.glob('*.npz'):        
-            eps_fns.extend(sorted(replay_dir.glob('*.npz'), reverse=True))
+        eps_fns = sorted(self._replay_dir.glob('*.npz'), reverse=True)
         fetched_size = 0
         for eps_fn in eps_fns:
             eps_idx, eps_len = [int(x) for x in eps_fn.stem.split('_')[1:]]
             if eps_idx % self._num_workers != worker_id:
-                continue
-            if self.rank is not None and eps_idx % self.world_size != self.rank:
                 continue
             if eps_fn in self._episodes.keys():
                 break
@@ -169,44 +153,48 @@ class ReplayBuffer(IterableDataset):
                 break
     
     def _preload(self):
-        eps_fns = []
-        for replay_dir in self._replay_dir:        
-            eps_fns.extend(sorted(replay_dir.glob('*.npz'), reverse=True))
+        eps_fns = sorted(self._replay_dir.glob('*.npz'), reverse=True)
         for eps_fn in eps_fns:
-            eps_idx, eps_len = [int(x) for x in eps_fn.stem.split('_')[1:]]
-            if self.rank is not None and eps_idx % self.world_size != self.rank:
-                continue
-            else:
-                self._store_episode(eps_fn)
+            self._store_episode(eps_fn)
     
     def _sample(self):
-        # try:
-        #     self._try_fetch()
-        # except:
-        #     traceback.print_exc()
+        try:
+            self._try_fetch()
+        except:
+            traceback.print_exc()
         self._samples_since_last_fetch += 1
         episode = self._sample_episode()
         # add +1 for the first dummy transition
-        idx = np.random.randint(0, episode_len(episode) - self._nstep + 1) + 1
-        
+        n_step = max(self._nstep, self._multistep)
+        idx = np.random.randint(0, episode_len(episode) - n_step + 1) + 1
         obs = episode['observation'][idx - 1]
-        action     = episode['action'][idx]
-        action_seq = [episode['action'][idx+i] for i in range(self._nstep)]
-        next_obs = episode['observation'][idx + self._nstep - 1]
-        reward = np.zeros_like(episode['reward'][idx])
-        discount = np.ones_like(episode['discount'][idx])
-        next_obs_lst = []
-        for i in range(self._nstep):
-            step_reward = episode['reward'][idx + i]
-            reward += discount * step_reward
-            discount *= episode['discount'][idx + i] * self._discount
-            next_obs_lst.append(episode['observation'][idx + i])
-        #next_obs_lst = np.vstack(next_obs_lst)
-        if self.vocab_size is not None:
-            tok = episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.n_code, self.vocab_size, self.min_frequency, self.max_token_length)][idx]
-            return (obs, action, tok, reward, discount, next_obs, next_obs_lst)
-        else:
-            return (obs, action, action_seq, reward, discount, next_obs, next_obs_lst)
+        try:
+            state = episode['state'][idx-1]
+            r_next_obs = episode['observation'][idx + self._multistep - 1]
+            action = episode['action'][idx]
+            action_seq = np.concatenate([episode['action'][idx+i] for i in range(self._multistep)])
+            next_obs = episode['observation'][idx + self._nstep - 1]
+            next_state = episode['state'][idx + self._nstep - 1]
+            reward = np.zeros_like(episode['reward'][idx])
+            discount = np.ones_like(episode['discount'][idx])
+            for i in range(self._nstep):
+                step_reward = episode['reward'][idx + i]
+                reward += discount * step_reward
+                discount *= episode['discount'][idx + i] * self._discount
+            return (obs, state, action, action_seq, reward, discount, next_obs, next_state, r_next_obs)
+        except:
+            r_next_obs = episode['observation'][idx + self._multistep - 1]
+            action = episode['action'][idx]
+            action_seq = np.concatenate([episode['action'][idx+i] for i in range(self._multistep)])
+            next_obs = episode['observation'][idx + self._nstep - 1]
+            reward = np.zeros_like(episode['reward'][idx])
+            discount = np.ones_like(episode['discount'][idx])
+            for i in range(self._nstep):
+                step_reward = episode['reward'][idx + i]
+                reward += discount * step_reward
+                discount *= episode['discount'][idx + i] * self._discount
+            return (obs, action, action_seq, reward, discount, next_obs, r_next_obs)
+            
 
     def __iter__(self):
         while True:
@@ -220,61 +208,46 @@ def _worker_init_fn(worker_id):
 
 
 def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, discount, n_code=None, 
-                       vocab_size=None, min_frequency=None, 
-                        max_token_length=None):
+                       save_snapshot, nstep, multistep, discount):
     max_size_per_worker = max_size // max(1, num_workers)
     
     iterable = ReplayBuffer(replay_dir,
                             max_size_per_worker,
                             num_workers,
                             nstep,
+                            multistep,
                             discount,
                             fetch_every=1000,
-                            save_snapshot=save_snapshot,
-                            n_code=n_code,
-                            vocab_size=vocab_size,
-                            min_frequency=min_frequency, 
-                            max_token_length=max_token_length)
+                            save_snapshot=save_snapshot)
 
     loader = torch.utils.data.DataLoader(iterable,
                                          batch_size=batch_size,
                                          num_workers=num_workers,
-                                         pin_memory=False,
+                                         pin_memory=True,
                                          worker_init_fn=_worker_init_fn)
     return loader
 
 def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, discount, rank, world_size, 
-                        n_code=None, vocab_size=None, min_frequency=None, 
-                        max_token_length=None):
+                       save_snapshot, nstep, multistep, discount):
     max_size_per_worker = max_size // max(1, num_workers)
     
     iterable = ReplayBuffer(replay_dir,
                             max_size_per_worker,
                             num_workers,
                             nstep,
+                            multistep,
                             discount,
                             fetch_every=1000,
-                            save_snapshot=save_snapshot,
-                            rank=rank,
-                            world_size=world_size,
-                            n_code=n_code,
-                            vocab_size=vocab_size,
-                            min_frequency=min_frequency, 
-                            max_token_length=max_token_length)
+                            save_snapshot=save_snapshot)
 
     loader = torch.utils.data.DataLoader(iterable,
                                          batch_size=batch_size,
                                          num_workers=num_workers,
-                                         pin_memory=False,
-                                         worker_init_fn=_worker_init_fn)
+                                         pin_memory=True,
+                                         worker_init_fn=_worker_init_fn,
+                                         shuffle=False,
+                                         sampler=DistributedSampler(dataset))
     return loader
- 
- 
-
-
-
 
 
 

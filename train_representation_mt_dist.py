@@ -65,8 +65,11 @@ class Workspace:
         device_ids = list(range(torch.cuda.device_count()))
         self.device = device_ids[rank]
         
+        # TODO: make these parameters, not hard-coded values.
         a_dim = 4
         obs_shape = (3*self.cfg.frame_stack,84,84)
+
+        # NOTE: in this file, the cfg that is being used is offline_mt_representation_config.yaml.
         self.agent = make_agent(obs_shape,
                                 a_dim,
                                 rank,
@@ -566,6 +569,8 @@ class Workspace:
         with snapshot.open('wb') as f:
             torch.save(payload, f)
 
+
+# RANK and WORLD_SIZE are needed to initialize the distributed data parallel training setup.
 RANK = None
 WORLD_SIZE = None
 
@@ -584,6 +589,7 @@ def main(cfg):
     if cfg.train_multitask_bc:
         workspace.train_multitask_bc()
     else:
+        # The training pipeline consists of 3 stages.
         if cfg.stage == 1:
             workspace.train_tokenizer()
         elif cfg.stage == 2:

@@ -85,7 +85,7 @@ class Workspace:
                       specs.Array((1,), np.float32, 'discount'))
 
         self.replay_storage = ReplayBufferStorage(data_specs,
-                                                  offline_data_dir,
+                                                  offline_data_dir / self.cfg.task_name,
                                                   store_only_success=True)
 
         self.replay_loader = make_replay_loader(

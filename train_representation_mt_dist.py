@@ -66,11 +66,8 @@ class Workspace:
         device_ids = list(range(torch.cuda.device_count()))
         self.device = device_ids[rank]
         
-        # TODO: make these parameters, not hard-coded values.
         a_dim = 4
         obs_shape = (3*self.cfg.frame_stack,84,84)
-
-        # NOTE: in this file, the cfg that is being used is offline_mt_representation_config.yaml.
         self.agent = make_agent(obs_shape,
                                 a_dim,
                                 rank,
@@ -95,8 +92,9 @@ class Workspace:
         if len(self.cfg.task_names) > 1:
             for task_name in self.cfg.task_names:
     
-                #offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
+                offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
                 offline_data_dirs.append(Path(offline_data_dir))
+                print(offline_data_dir)
         
         else:
             task_name = self.cfg.task_names[0]
@@ -160,9 +158,6 @@ class Workspace:
             except:
                 print(meta_action)
                 assert False
-            #codes = self.vocab[meta_action].split('C')[1:]
-            #code_buffer = [int(i) for i in codes]
-            #code_buffer = [meta_action]    
         
         code_selected = code_buffer.pop(0)
         learned_code  = self.agent.TACO.module.a_quantizer.embedding.weight
@@ -268,7 +263,7 @@ class Workspace:
         task_list = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
         lst_traj = []
         for task in task_list:
-            path = Path("{}/{}_expert500".format(self.cfg.data_storage_dir, task))
+            path = Path("/mount_point/offline_data_mw/{}_expert500".format(task))
             lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         
@@ -308,19 +303,19 @@ class Workspace:
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("{}/{}_expert3_{}".format(self.cfg.data_storage_dir, task, seed+1))
+                path = Path("/mount_point/offline_data_mw/{}_expert3_{}".format(task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
 
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("{}/{}_expert5_2_{}".format(self.cfg.data_storage_dir, task, seed+1))
+                path = Path("/mount_point/offline_data_mw/{}_expert5_2_{}".format(task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
 
         task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
         for task in task_list:
             for seed in range(4):
-                path = Path("{}/{}_expert10_{}".format(self.cfg.data_storage_dir, task, seed+1))
+                path = Path("/mount_point/offline_data_mw/{}_expert10_{}".format(task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         ### Rewrite the trajectory with BPE generated vocabulary
@@ -355,12 +350,12 @@ class Workspace:
             loaded_data = pickle.load(f)
             self.tokenizer, corpus, traj_names = loaded_data
 
-        #### Tokenizer the given trajectories
+        #### Tokenizer the given trajectories and check the number of unique tokens in the given demonstration trajectories
         lst_traj = []
         path = Path(self.cfg.offline_data_dir)
         lst_traj= list(sorted(path.glob('*.npz')))
-        self.tok_to_idx = dict()
-        self.idx_to_tok = []
+        self.tok_to_idx = dict() ### Token, Index Lookup
+        self.idx_to_tok = []    
         for f in lst_traj:
             with np.load(f) as e:
                 episode = dict(e)
@@ -393,10 +388,9 @@ class Workspace:
         meta_policy.apply(utils.weight_init)
         self.agent.TACO.module.meta_policy = meta_policy
         self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
-        tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False)[0]
-        tok_to_idx  = lambda tok: self.tok_to_idx[int(tok.item())]
+        tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False)[0] ### Token =>  First Code
+        tok_to_idx  = lambda tok: self.tok_to_idx[int(tok.item())] ### Token => Index
         
-        #index_fn = lambda x: int(self.vocab[x.item()].split('C')[1])
         while self.global_step < self.cfg.num_train_steps:
             if self.global_step%1000 == 0 and self.rank == 0:
                 # wait until all the metrics schema is populated
@@ -424,28 +418,6 @@ class Workspace:
             else:
                 
                 self.eval_mt45()
-    
-    # def train_multitask_bc(self):
-    #     metrics = None
-    #     while self.global_step < self.cfg.num_train_steps:
-    #         if self.global_step%100 == 0 and self.rank == 0:
-    #             # wait until all the metrics schema is populated
-    #             if metrics is not None:
-    #                 # log stats
-    #                 print('DECODER_LOSS:{}'.format(metrics['decoder_loss']))
-    #                 elapsed_time, total_time = self.timer.reset()
-    #                 with self.logger.log_and_dump_ctx(self.global_step,
-    #                                                   ty='train') as log:
-    #                     log('total_time', total_time)
-    #                     log('step', self.global_step)
-
-    #             if self.global_step > 0:
-    #                 if self.cfg.save_snapshot and self.rank == 0:
-    #                     self.save_snapshot(1)
-
-    #         self._global_step += 1
-    #         metrics = self.agent.update_multitask_bc(self.replay_iter, self.global_step)
-    #         self.logger.log_metrics(metrics, self.global_step, ty='train')
 
     
     def save_snapshot(self, stage):
@@ -462,33 +434,15 @@ class Workspace:
             
     def load_snapshot(self):
         snapshot = self.work_dir / 'snapshot.pt'
-        #try:
         with snapshot.open('rb') as f:
             payload = torch.load(f)
         self.__dict__['agent'] = payload['agent']
         if self.cfg.stage == 1:
             self.__dict__['_global_step'] = payload['_global_step']
-        #state_dict = torch.load(self.work_dir / 'model_10.pt', map_location=torch.device('cuda:{}'.format(self.rank)))
         self.agent.device = self.device
         self.agent.TACO.device = self.device
         self.agent.TACO.to(self.device)
         print('Resuming Snapshopt')
-        
-        # ### Reinitialize the meta-policy head
-        # if self.cfg.reinit_metapolicy:
-        #     self.agent.encoder.eval()
-        #     meta_policy = nn.Sequential(
-        #     nn.Linear(self.cfg.feature_dim, self.cfg.hidden_dim),
-        #     nn.ReLU(),
-        #     nn.Linear(self.cfg.hidden_dim, self.cfg.hidden_dim),
-        #     nn.ReLU(),
-        #     nn.Linear(self.cfg.hidden_dim, self.cfg.vocab_size)
-        #     ).to(self.device)
-        #     meta_policy.train(True)
-        #     meta_policy.apply(utils.weight_init)
-        #     self.agent.TACO.module.meta_policy = meta_policy
-        #     self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
-        # self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
         
     
     def save_encoder(self):
@@ -499,8 +453,6 @@ class Workspace:
         with snapshot.open('wb') as f:
             torch.save(payload, f)
 
-
-# RANK and WORLD_SIZE are needed to initialize the distributed data parallel training setup.
 RANK = None
 WORLD_SIZE = None
 
@@ -519,7 +471,6 @@ def main(cfg):
     if cfg.train_multitask_bc:
         workspace.train_multitask_bc()
     else:
-        # The training pipeline consists of 3 stages.
         if cfg.stage == 1:
             workspace.train_tokenizer()
         elif cfg.stage == 2:

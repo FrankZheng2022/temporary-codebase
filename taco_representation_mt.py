@@ -8,13 +8,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import utils
-from r3m import load_r3m
 import torchvision.transforms as T
 from quantizer import VectorQuantizer
 import time
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from vqtorch.nn import VectorQuant
 
 class RandomShiftsAug(nn.Module):
     def __init__(self, pad):
@@ -48,37 +46,6 @@ class RandomShiftsAug(nn.Module):
                              grid,
                              padding_mode='zeros',
                              align_corners=False)
-
-class R3MEncoder(nn.Module):
-    def __init__(self, feature_dim, device):
-        super(R3MEncoder, self).__init__()
-        self.model = load_r3m("resnet18").to(device)
-        self.transforms = nn.Sequential(
-            T.Resize(256),
-            T.CenterCrop(224),
-            T.ConvertImageDtype(torch.float),
-            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        )
-        out_dim = 512*3
-        #out_dim = 2048*3  
-        self.trunk = nn.Sequential(nn.Linear(out_dim, feature_dim),
-                                   nn.LayerNorm(feature_dim), nn.Tanh())
-        self.repr_dim = feature_dim
-        self.image_channel = 3
-        
-    
-    def forward(self, obs, flatten=True):
-
-        time_step = obs.shape[1] // self.image_channel
-        embedding_batch = []
-        for frame_id in range(time_step):
-            embedding_i = self.model.module.convnet(self.transforms((obs[:, frame_id * 3:(frame_id + 1) * 3]) / 255.))
-            embedding_batch.append(embedding_i)
-
-        embedding_batch = torch.stack(embedding_batch, dim=1)
-        embedding_batch = embedding_batch.view(obs.shape[0], -1)
-        
-        return self.trunk(embedding_batch)
 
 class ActionEncoder(nn.Module):
     def __init__(self, feature_dim, hidden_dim, action_dim, obs_dependent):
@@ -220,7 +187,7 @@ class TACO(nn.Module):
 
 class TACORepresentation:
     def __init__(self, obs_shape, action_dim, device, lr, feature_dim,
-                 hidden_dim, nstep, spr, trunk, r3m, pcgrad, n_code, vocab_size, obs_dependent):
+                 hidden_dim, nstep, spr, trunk, pcgrad, n_code, vocab_size, obs_dependent):
         self.device = device
         self.nstep = nstep
         self.spr = spr
@@ -228,12 +195,8 @@ class TACORepresentation:
         self.scaler = GradScaler()
         self.feature_dim = feature_dim
         
-        # models
-        if r3m:
-            self.encoder = R3MEncoder(feature_dim, device)
-        else:
-            self.encoder = Encoder(obs_shape, feature_dim, 
-                                    trunk=trunk).to(device)
+        self.encoder = Encoder(obs_shape, feature_dim, 
+                                trunk=trunk).to(device)
         
         self.TACO = DDP(TACO(self.encoder.repr_dim, feature_dim, action_dim, hidden_dim, self.encoder, nstep, n_code, vocab_size, device, obs_dependent).to(device))
         

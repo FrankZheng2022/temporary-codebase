@@ -6,7 +6,7 @@ from collections import deque
 import numpy as np
 import gym
 from gym.wrappers import TimeLimit
-from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE
+#from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE
 from metaworld import mw_gym_make
 import dm_env
 from dm_env import specs

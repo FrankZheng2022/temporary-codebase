@@ -45,7 +45,7 @@ feature_dim: 50
 exp_name: default
 spr: false
 curl: true
-target: taco_representation_mt_dist.TACORepresentation
+target: taco_representation_mt.TACORepresentation
   
 agent:
   _target_: ${target}

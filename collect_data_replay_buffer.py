@@ -39,7 +39,7 @@ class ReplayBufferStorage:
     def __init__(self, data_specs, replay_dir, store_only_success=False):
         self._data_specs = data_specs
         self._replay_dir = replay_dir
-        replay_dir.mkdir(exist_ok=True)
+        replay_dir.mkdir(parents=True, exist_ok=True)
         self._current_episode = defaultdict(list)
         self._preload()
         self.store_only_success = store_only_success

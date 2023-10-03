@@ -24,3 +24,4 @@ scikit-image
 dm_control
 gym==0.22.0
 chardet
+tokenizers

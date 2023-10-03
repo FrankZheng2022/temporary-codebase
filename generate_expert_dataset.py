@@ -19,6 +19,7 @@ from dm_env import specs
 import mw
 from metaworld.policies import *
 import utils
+import shutil
 from logger import Logger
 from collect_data_replay_buffer import ReplayBufferStorage, make_replay_loader
 from video import TrainVideoRecorder, VideoRecorder

@@ -17,11 +17,11 @@ cmd: python -W ignore train_representation_mt_dist.py
 arg_template: '{}={}'
 
 
-# # (optional) A directory or a list of directories to upload
-# code_paths:  # A path AAA/BBB/CCC will be uploaded as rl_nexus/CCC
-#   - ~/codes/llm/robomimic-hitl
+# (optional) A directory or a list of directories to upload
+code_paths:  # A path AAA/BBB/CCC will be uploaded as rl_nexus/CCC
+   - /mnt/d/code/temporary-codebase
 
-# (optional) This should be a relative path wrt rl_nexus. If not provided, it
+#(optional) This should be a relative path wrt rl_nexus for running commands during job execution. If not provided, it
 # uses the first directory in code_paths by default. Otherwise, it uses rl_nexus.
 code_dir: temporary-codebase  # TODO: change this when the codebase is ready.
 
@@ -40,13 +40,13 @@ setup_cmds:   # This starts from the `dilbert` directory.
   ################
   - cd rl_nexus/
   # install cgo
-  - git clone https://$GITHUB_TOKEN@github.com/FrankZheng2022/temporary-codebase
+  #- git clone https://$GITHUB_TOKEN@github.com/FrankZheng2022/temporary-codebase
+  # This is for the case when it's uploaded from the local machine
   - cd temporary-codebase
   # - . install.sh
   - pip install -r requirements_210.txt
-  - pip install -e metaworld
+  - pip install git+https://$GITHUB_TOKEN:x-oauth-basic@github.com/microsoft/dexter-benchmarks-metaworld.git@ruijie#egg=metaworld
   - pip freeze
-  - pip install gym==0.26.2
   - cd .. # back to rl_nexus
   - cd .. # back to dilbert
 
@@ -59,11 +59,12 @@ hps_dict:
   pcgrad: [true]
   exp_name: [test]
   replay_buffer_num_workers: [2]
-  batch_size: [128]
+  batch_size: [128] #[4096]
   save_snapshot: [true]
   obs_dependent: [true]
   port: [12235]
   stage: [1]
+  #offline_data_dir: [$datastore/taa_data/offline_data_test/]
   # seed: [1,2,3]
 
 # (optional) A dict that specifies the default values of hyperparameters. This
@@ -73,8 +74,8 @@ hps_dict:
 config:
   # seed: randint  # keys here do not need to appear in hps_dict
   # 'randint' is a reserved phrase, which would generate random seeds at runtime.
-  data_storage_dir: $datastore/taa_data/offline_data_test/   # TODO: change this when we have the real data
-  log_dir: ../../results
+  data_storage_dir: $datastore/taa_data/ # TODO: change this when we have the real data
+  task_data_dir_suffix: null
 
 n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
 
@@ -84,7 +85,8 @@ n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
 # vm_size: Standard_NC4as_T4_v3
 
 # compute_target: sing-msrresrchvc-V100
-compute_target: sing-msrresrchvc-P100
+#compute_target: sing-msrresrchvc-P100
+compute_target: sing-msrresrchvc-4xP100
 # compute_target: sing-msrresrchvc-P40
 # compute_target: sing-msrrlvc-T4 # Name of the compute resource.
 

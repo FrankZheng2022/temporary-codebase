@@ -91,9 +91,8 @@ class Workspace:
         offline_data_dirs, counter, self.task_map = [], 0, [[] for i in range(self.world_size)]
         if len(self.cfg.task_names) > 1:
             for task_name in self.cfg.task_names:
-    
-                offline_data_dir = '{}/{}_expert500'.format(self.cfg.data_storage_dir, task_name) 
-                offline_data_dirs.append(Path(offline_data_dir))
+                offline_data_dir = Path(self.cfg.data_storage_dir) / (task_name+('' if not self.cfg.task_data_dir_suffix or self.cfg.task_data_dir_suffix == 'None' else self.cfg.task_data_dir_suffix))
+                offline_data_dirs.append(offline_data_dir)
                 print(offline_data_dir)
         
         else:

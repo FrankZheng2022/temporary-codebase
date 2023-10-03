@@ -5,6 +5,7 @@ defaults:
  
 #task_names: ['assembly', 'basketball'] # for testing
 data_storage_dir: /mount_point/offline_data_mw
+task_data_dir_suffix: _expert500
 # task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push'] # for testing mt-19
 
 task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']

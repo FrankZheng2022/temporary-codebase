@@ -93,7 +93,6 @@ class Workspace:
             for task_name in self.cfg.task_names:
                 offline_data_dir = Path(self.cfg.data_storage_dir) / (task_name+('' if not self.cfg.task_data_dir_suffix or self.cfg.task_data_dir_suffix == 'None' else self.cfg.task_data_dir_suffix))
                 offline_data_dirs.append(offline_data_dir)
-                print(offline_data_dir)
         
         else:
             task_name = self.cfg.task_names[0]
@@ -155,7 +154,7 @@ class Workspace:
             try:
                 code_buffer = self.tokenizer.decode([tok], verbose=False)
             except:
-                print(meta_action)
+                print('Error occured when choosing meta action:{}'.format(meta_action))
                 assert False
         
         code_selected = code_buffer.pop(0)
@@ -249,8 +248,6 @@ class Workspace:
                 # try to save snapshot
                 if self.cfg.save_snapshot and self.rank == 0:
                     self.save_snapshot(self.cfg.stage)
-                # if self.global_step%10000 == 0 and self.rank == 0:
-                #     self.save_model()
 
             self._global_step += 1
             metrics = self.agent.update(self.replay_iter, self.global_step)
@@ -262,7 +259,7 @@ class Workspace:
         task_list = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
         lst_traj = []
         for task in task_list:
-            path = Path("/mount_point/offline_data_mw/{}_expert500".format(task))
+            path = Path("/{}/{}_expert500".format(self.cfg.data_storage_dir, task))
             lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         
@@ -288,7 +285,8 @@ class Workspace:
             corpus.append(min_encoding_indices)
             traj_names.append(str(f))
         print('=========Offline Data Tokenized!==========')
-
+        
+        ### Train tokenizer on the tokenized pretraining trajectories
         tokenizer = Tokenizer(algo='bpe', vocab_size=self.cfg.vocab_size)
         tokenizer.train(corpus, min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length, verbose=True)
 
@@ -296,25 +294,11 @@ class Workspace:
         vocab_dir.mkdir(exist_ok=True)
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
             pickle.dump([tokenizer, corpus, traj_names], f)
-
-        #### Tokenize Trajectories from 5 Unseen Takss
-        lst_traj = []
-        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
+        
+        ### Includ the 5 Unseen Tasks
         for task in task_list:
             for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert3_{}".format(task, seed+1))
-                lst_traj.extend(list(sorted(path.glob('*.npz'))))
-
-        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
-        for task in task_list:
-            for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert5_2_{}".format(task, seed+1))
-                lst_traj.extend(list(sorted(path.glob('*.npz'))))
-
-        task_list = ['box-close', 'hand-insert', 'bin-picking', 'door-lock', 'door-unlock']
-        for task in task_list:
-            for seed in range(4):
-                path = Path("/mount_point/offline_data_mw/{}_expert10_{}".format(task, seed+1))
+                path = Path("{}/{}_expert5_{}".format(self.cfg.data_storage_dir, task, seed+1))
                 lst_traj.extend(list(sorted(path.glob('*.npz'))))
         
         ### Rewrite the trajectory with BPE generated vocabulary
@@ -335,7 +319,6 @@ class Workspace:
                 min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
                 min_encoding_indices = [int(idx) for idx in min_encoding_indices]
     
-            #traj_tok = utils.tokenize_vocab(min_encoding_indices, vocab_lookup, merges)
             traj_tok = [tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
             traj_tok =  np.array(traj_tok, dtype=np.int64).reshape(len(traj_tok), -1)
             episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.cfg.n_code, self.cfg.vocab_size, 

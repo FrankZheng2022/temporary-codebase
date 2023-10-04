@@ -248,7 +248,7 @@ class TACORepresentation:
             spr_loss += utils.spr_loss(y_pred, y_next)
         
         self.taco_opt.zero_grad()
-        (spr_loss + meta_policy_loss + decoder_loss + quantize_loss).backward
+        (spr_loss + meta_policy_loss + decoder_loss + quantize_loss).backward()
         self.taco_opt.step()
         metrics['spr_loss']      = spr_loss.item()
         metrics['quantize_loss'] = quantize_loss.item()

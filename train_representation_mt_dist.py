@@ -257,7 +257,6 @@ class Workspace:
             self.logger.log_metrics(metrics, self.global_step, ty='train')
 
         dest_log_dir = self.results_dir / 'logs'
-        # BUG: This copy doesn't seem to copy anything. Figure out why.
         distutils.dir_util.copy_tree(str(self.logger._log_dir), str(dest_log_dir))
 
 

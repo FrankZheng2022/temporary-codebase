@@ -13,7 +13,7 @@
 # value 1.0. Then the full commandline executed in `code_dir` is `$cmd --X 1.0`.
 # If `cmd` saves results, for syncing, please save them to
 # the `results` directory in dilbert. (like the example below).
-cmd: python -W ignore train_representation_mt_dist.py
+cmd: python -W ignore train_pipeline.py
 arg_template: '{}={}'
 
 
@@ -53,19 +53,17 @@ setup_cmds:   # This starts from the `dilbert` directory.
 ### Hyperparameter setting
 # A dict that specifies the values of hyperparameters to search over.
 hps_dict:
-  feature_dim: [100]
-  n_code: [10]
-  nstep: [3]
-  pcgrad: [true]
-  exp_name: [test]
-  replay_buffer_num_workers: [2]
-  batch_size: [128] #[4096]
-  save_snapshot: [true]
-  obs_dependent: [true]
-  max_traj_per_task: [100]
-  port: [12235]
-  stage: [1]
-  # seed: [1,2,3]
+  stage_1_num_train_steps: [50]
+  stage_1_batch_size: [256] #[4096]
+  stage_1_and_2_max_traj_per_task: [100]
+  stage_3_num_train_steps: [50]
+  stage_3_batch_size: [256]
+  stage_3_downstream_task_name: [hand-insert]
+  stage_3_max_traj_per_task: [5]
+  vocab_size: [200]
+  min_frequency: [100]
+  max_token_length: [20]
+  seed: [1]
 
 # (optional) A dict that specifies the default values of hyperparameters. This
 # is meant to overwrite the default hyperparameter used in the method.
@@ -74,9 +72,18 @@ hps_dict:
 config:
   # seed: randint  # keys here do not need to appear in hps_dict
   # 'randint' is a reserved phrase, which would generate random seeds at runtime.
-  data_storage_dir: $datastore/taa_data/ # TODO: change this when we have the real data
+  data_storage_dir: $datastore/taa_data/
   task_data_dir_suffix: null
   results_dir: $datastore/taa_results/
+  exp_name: taa
+  n_code: 10
+  nstep: 3
+  obs_dependent: true
+  base_port: 12235
+  vocab_size: 200
+  min_frequency: 5
+  max_token_length: 20
+
 
 n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
 

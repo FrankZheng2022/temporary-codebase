@@ -13,7 +13,7 @@ noise: 0.
 
 # task settings
 frame_stack: 3
-action_repeat: 2
+action_repeat: 1
 discount: 0.99
 # train settings
 num_seed_frames: 4000

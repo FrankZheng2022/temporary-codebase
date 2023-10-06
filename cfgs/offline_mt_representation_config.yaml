@@ -6,9 +6,12 @@ defaults:
 #task_names: ['assembly', 'basketball'] # for testing
 data_storage_dir: /mount_point/offline_data_mw
 task_data_dir_suffix: _expert500
+results_dir: /mount_point/taa_results
+downstream_task_name: none
+tokenized_data_dir: tmp/tokenized
 # task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push'] # for testing mt-19
-
 task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
+max_traj_per_task: 100
 
 train_multitask_bc: false
 stage: 1
@@ -20,7 +23,6 @@ eval_freq: 5000
 port: 12235
 obs_dependent: false
 reinit_metapolicy: true
-offline_data_dir: none
 min_frequency: 5
 max_token_length: 20
 
@@ -33,7 +35,7 @@ num_train_steps: 100100
 trunk: true
 # task settings
 frame_stack: 3
-action_repeat: 2
+action_repeat: 1
 discount: 0.99
 # snapshot
 save_snapshot: true

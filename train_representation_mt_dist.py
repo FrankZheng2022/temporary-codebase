@@ -11,10 +11,12 @@ os.environ['MUJOCO_GL'] = 'egl'
 
 from pathlib import Path
 
+import distutils.dir_util
 import hydra
 import numpy as np
 import torch
 import torch.nn as nn
+import random
 import mw
 import utils
 from logger_offline import Logger
@@ -54,6 +56,10 @@ def make_agent(obs_shape, action_dim, rank, cfg):
     return hydra.utils.instantiate(cfg)
 
 
+def construct_task_data_path(root_dir, task_name, task_data_dir_suffix):
+    return Path(root_dir) / (task_name+('' if not task_data_dir_suffix or task_data_dir_suffix == 'None' else task_data_dir_suffix))
+
+
 class Workspace:
     def __init__(self, cfg, rank, world_size):
         self.work_dir = Path.cwd()
@@ -75,54 +81,50 @@ class Workspace:
         self.timer = utils.Timer()
         self._global_step = 0
         self._global_episode = 0
+        self.results_dir = Path(self.cfg.results_dir)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.pretraining_data_dirs = []
 
-        #print(self.device)
-        #### Don't need to load the data in the second stage (calculating BPE)
-        if cfg.stage ==2:
-            return 
-        self.setup()
-
-    def setup(self):
-        # create logger
-        self.logger = Logger(self.work_dir, use_tb=self.cfg.use_tb, offline=True)
-        # create envs
-        print('Rank:{} World Size:{}'.format(self.rank, self.world_size))
-
-        offline_data_dirs, counter, self.task_map = [], 0, [[] for i in range(self.world_size)]
-        if len(self.cfg.task_names) > 1:
+        self.pretraining_data_dirs = []
+        if self.cfg.stage < 3:
             for task_name in self.cfg.task_names:
-                offline_data_dir = Path(self.cfg.data_storage_dir) / (task_name+('' if not self.cfg.task_data_dir_suffix or self.cfg.task_data_dir_suffix == 'None' else self.cfg.task_data_dir_suffix))
-                offline_data_dirs.append(offline_data_dir)
-        
+                offline_data_dir = construct_task_data_path(self.cfg.data_storage_dir, task_name, self.cfg.task_data_dir_suffix)
+                self.pretraining_data_dirs.append(offline_data_dir)
         else:
             task_name = self.cfg.task_names[0]
             self.eval_env = mw.make(task_name, self.cfg.frame_stack,
                                     self.cfg.action_repeat, self.cfg.seed, train=False)
-            offline_data_dir = self.cfg.offline_data_dir
-            
-        
-        if self.cfg.offline_data_dir == 'none':
-            if self.cfg.stage <= 2:
-                self.replay_loader = make_replay_loader_dist(
-                    offline_data_dirs, self.cfg.replay_buffer_size,
-                    self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size)
-            else:
-                ### Loading tokens after stage 2
-                 self.replay_loader = make_replay_loader_dist(
-                    offline_data_dirs, self.cfg.replay_buffer_size,
-                    self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
-                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
-                    min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
-        else:
-            #print('Create Data Loader')
+
+        #### Don't need to load the data in the second stage (calculating BPE)
+        if self.cfg.stage == 2:
+            return 
+        self.setup_replay_buffer()
+
+
+    def setup_replay_buffer(self):
+        # create logger
+        log_dir = self.work_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.logger = Logger(log_dir, use_tb=self.cfg.use_tb, offline=True)
+        # create envs
+        print('Rank:{} World Size:{}'.format(self.rank, self.world_size))
+
+        if self.cfg.stage == 1:
             self.replay_loader = make_replay_loader_dist(
-                    [Path(self.cfg.offline_data_dir)], self.cfg.replay_buffer_size,
-                    self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
-                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
-                    min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
+                self.pretraining_data_dirs, self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
+                self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
+                True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size)
+        elif self.cfg.stage == 3:
+             downstream_data_path = construct_task_data_path(self.cfg.data_storage_dir, self.cfg.downstream_task_name, self.cfg.task_data_dir_suffix)
+             print(f"Loading target task data from {downstream_data_path}")
+             self.replay_loader = make_replay_loader_dist(
+                [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
+                self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
+                True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
+                n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
+                min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
+        else:
+            assert self.cfg.stage != 2, "You shouldn't set up the replay buffer for stage 2. Most likely you ended up here due to a logic bug."
 
         print('Finish Reading Data') 
         self._replay_iter = None
@@ -174,7 +176,6 @@ class Workspace:
                 time_step = env.reset()
                 code_buffer = []
                 done, step = False, 0
-                #frames = []
                 reward = 0
                 while not done and step < 200:
                     code_buffer, action = self.act(time_step['observation'], code_buffer)
@@ -192,8 +193,8 @@ class Workspace:
                 print("===============Task:{} Number of Eval Episodes:{} Success Rate:{}%===============".format(task_name, self.cfg.num_eval_episodes, success / self.cfg.num_eval_episodes * 100))
         
         if self.rank == 0:
-            eval_dir = self.work_dir / 'eval'
-            eval_dir.mkdir(exist_ok=True)
+            eval_dir = self.results_dir / 'eval'
+            eval_dir.mkdir(parents=True, exist_ok=True)
             save_dir = eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name)
             with open(save_dir, 'wb') as f:
                 pickle.dump(performance, f)
@@ -223,8 +224,8 @@ class Workspace:
 
         print('Success Rate:{}'.format(success/self.cfg.num_eval_episodes*100))
         self.performance.append(success/self.cfg.num_eval_episodes*100)
-        eval_dir = self.work_dir / 'eval'
-        eval_dir.mkdir(exist_ok=True)
+        eval_dir = self.results_dir / 'eval'
+        eval_dir.mkdir(parents=True, exist_ok=True)
         if self.rank == 0:    
             with open(eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name), 'wb') as f:
                 pickle.dump(self.performance, f)
@@ -253,17 +254,18 @@ class Workspace:
             metrics = self.agent.update(self.replay_iter, self.global_step)
             self.logger.log_metrics(metrics, self.global_step, ty='train')
 
+        dest_log_dir = self.results_dir / 'logs'
+        # BUG: This copy doesn't seem to copy anything. Figure out why.
+        distutils.dir_util.copy_tree(str(self.logger._log_dir), str(dest_log_dir))
+
     
     def train_bpe(self):
         self.agent.TACO.train(False)
-        task_list = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
         lst_traj = []
-        for task in task_list:
-            path = Path("/{}/{}_expert500".format(self.cfg.data_storage_dir, task))
-            lst_traj.extend(list(sorted(path.glob('*.npz'))))
+        for task_dir in self.pretraining_data_dirs:
+            lst_traj.extend(utils.choose(list(sorted(task_dir.glob('*.npz'))), self.cfg.max_traj_per_task))
         
-        
-        print('Load {} Trajectories'.format(len(lst_traj)))
+        print('Loaded {} trajectories'.format(len(lst_traj)))
         traj_names = []
         ### Train BPE tokenizer
         counter = 0
@@ -284,58 +286,33 @@ class Workspace:
             min_encoding_indices = [int(idx) for idx in min_encoding_indices]
             corpus.append(min_encoding_indices)
             traj_names.append(str(f))
+
+            if counter % 100 == 0:
+                print(f"Processed {counter} trajectories")
+
         print('=========Offline Data Tokenized!==========')
         
         ### Train tokenizer on the tokenized pretraining trajectories
         tokenizer = Tokenizer(algo='bpe', vocab_size=self.cfg.vocab_size)
         tokenizer.train(corpus, min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length, verbose=True)
 
-        vocab_dir = self.work_dir / 'vocab'
-        vocab_dir.mkdir(exist_ok=True)
+        vocab_dir = self.results_dir / 'vocab'
+        vocab_dir.mkdir(parents=True, exist_ok=True)
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
             pickle.dump([tokenizer, corpus, traj_names], f)
-        
-        ### Includ the 5 Unseen Tasks
-        for task in task_list:
-            for seed in range(4):
-                path = Path("{}/{}_expert5_{}".format(self.cfg.data_storage_dir, task, seed+1))
-                lst_traj.extend(list(sorted(path.glob('*.npz'))))
-        
-        ### Rewrite the trajectory with BPE generated vocabulary
-        for f in lst_traj:
-            try:
-                with np.load(f) as e:
-                    episode = dict(e)
-            except:
-                #print(f)
-                continue
-            with torch.no_grad():
-                obs, action = episode['observation'], episode['action']
-                obs = torch.from_numpy(obs).to(self.device)
-                action = torch.from_numpy(action).to(self.device)
-                z = self.agent.encoder(obs.float())
-                u = self.agent.TACO.module.action_encoder(z, action)
-                _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
-                min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
-                min_encoding_indices = [int(idx) for idx in min_encoding_indices]
-    
-            traj_tok = [tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
-            traj_tok =  np.array(traj_tok, dtype=np.int64).reshape(len(traj_tok), -1)
-            episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.cfg.n_code, self.cfg.vocab_size, 
-                                                                 self.cfg.min_frequency, self.cfg.max_token_length)] = traj_tok
-            utils.save_episode(episode, f)
 
     
     def train_metapolicy(self):
         metrics = None
-        with open(self.work_dir / 'vocab' / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'rb') as f:
+        vocab_dir = self.results_dir / 'vocab'
+        with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'rb') as f:
             loaded_data = pickle.load(f)
             self.tokenizer, corpus, traj_names = loaded_data
 
         #### Tokenizer the given trajectories and check the number of unique tokens in the given demonstration trajectories
         lst_traj = []
-        path = Path(self.cfg.offline_data_dir)
-        lst_traj= list(sorted(path.glob('*.npz')))
+        path = construct_task_data_path(self.cfg.data_storage_dir, self.cfg.downstream_task_name, self.cfg.task_data_dir_suffix)
+        lst_traj = utils.choose(list(sorted(path.glob('*.npz'))), self.cfg.max_traj_per_task)
         self.tok_to_idx = dict() ### Token, Index Lookup
         self.idx_to_tok = []    
         for f in lst_traj:
@@ -404,9 +381,9 @@ class Workspace:
     
     def save_snapshot(self, stage):
         if stage == 1:
-            snapshot = self.work_dir / 'snapshot.pt'
+            snapshot = self.results_dir / 'snapshot.pt'
         else:
-            snapshot = self.work_dir / 'snapshot_vocab{}.pt'.format(self.cfg.vocab_size)
+            snapshot = self.results_dir / 'snapshot_vocab{}.pt'.format(self.cfg.vocab_size)
                                                                    
         keys_to_save = ['agent', '_global_step']
         payload = {k: self.__dict__[k] for k in keys_to_save}
@@ -415,7 +392,7 @@ class Workspace:
             torch.save(payload, f)
             
     def load_snapshot(self):
-        snapshot = self.work_dir / 'snapshot.pt'
+        snapshot = self.results_dir / 'snapshot.pt'
         with snapshot.open('rb') as f:
             payload = torch.load(f)
         self.__dict__['agent'] = payload['agent']
@@ -429,7 +406,7 @@ class Workspace:
     
     def save_encoder(self):
         counter = (self.global_step // 10000) + 1
-        snapshot = self.work_dir / "encoder_{}.pt".format(counter)
+        snapshot = self.results_dir / "encoder_{}.pt".format(counter)
         
         payload = self.__dict__['agent'].encoder.state_dict()
         with snapshot.open('wb') as f:
@@ -463,12 +440,16 @@ def main(cfg):
             raise Error
     destroy_process_group()
 
-def wrapper(rank, world_size):
+def wrapper(rank, world_size, cfg):
     global RANK, WORLD_SIZE
     RANK = rank
     WORLD_SIZE = world_size
-    main()
+    print(f'WORLD SIZE: {world_size}, RANK: {rank}')
+    main(cfg)
+
+def main_mp_launch_helper(cfg):
+    world_size = torch.cuda.device_count()
+    mp.spawn(wrapper, args=(world_size, cfg), nprocs=world_size)
 
 if __name__ == '__main__':
-    world_size = torch.cuda.device_count()
-    mp.spawn(wrapper, args=(world_size,), nprocs=world_size)
+    main_mp_launch_helper(None)

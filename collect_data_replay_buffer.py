@@ -40,7 +40,6 @@ class ReplayBufferStorage:
         self._data_specs = data_specs
         self._replay_dir = replay_dir
         replay_dir.mkdir(parents=True, exist_ok=True)
-        print(f'THE DESTINATION DIR IS {replay_dir}')
         self._current_episode = defaultdict(list)
         self._preload()
         self.store_only_success = store_only_success
@@ -227,28 +226,3 @@ def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
                                          pin_memory=True,
                                          worker_init_fn=_worker_init_fn)
     return loader
-
-def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, multistep, discount):
-    max_size_per_worker = max_size // max(1, num_workers)
-    
-    iterable = ReplayBuffer(replay_dir,
-                            max_size_per_worker,
-                            num_workers,
-                            nstep,
-                            multistep,
-                            discount,
-                            fetch_every=1000,
-                            save_snapshot=save_snapshot)
-
-    loader = torch.utils.data.DataLoader(iterable,
-                                         batch_size=batch_size,
-                                         num_workers=num_workers,
-                                         pin_memory=True,
-                                         worker_init_fn=_worker_init_fn,
-                                         shuffle=False,
-                                         sampler=DistributedSampler(dataset))
-    return loader
-
-
-

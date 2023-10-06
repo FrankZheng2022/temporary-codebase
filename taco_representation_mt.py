@@ -190,7 +190,7 @@ class TACORepresentation:
                  hidden_dim, nstep, spr, trunk, pcgrad, n_code, vocab_size, obs_dependent):
         self.device = device
         self.nstep = nstep
-        self.spr = spr
+        self.spr = spr # TODO: remove it? It seems unused...
         self.pcgrad = pcgrad
         self.scaler = GradScaler()
         self.feature_dim = feature_dim

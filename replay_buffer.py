@@ -6,6 +6,7 @@ import datetime
 import io
 import random
 import traceback
+import utils
 from collections import defaultdict
 
 import numpy as np
@@ -35,66 +36,14 @@ def load_episode(fn):
         return episode
 
 
-class CollectReplayBufferStorage:
-    def __init__(self, data_specs, replay_dir, store_only_success=False):
-        self._data_specs = data_specs
-        self._replay_dir = replay_dir
-        replay_dir.mkdir(exist_ok=True)
-        self._current_episode = defaultdict(list)
-        self._preload()
-        self.store_only_success = store_only_success
-        self._success = False
-
-    def __len__(self):
-        return self._num_transitions
-
-    def add(self, time_step):
-        for spec in self._data_specs:
-            value = time_step[spec.name]
-            if np.isscalar(value):
-                value = np.full(spec.shape, value, spec.dtype)
-            assert spec.shape == value.shape and spec.dtype == value.dtype
-            self._current_episode[spec.name].append(value)
-        if time_step['success'] == 1.0:
-            self._success = True
-        if time_step.last() or self._success:
-            episode = dict()
-            for spec in self._data_specs:
-                value = self._current_episode[spec.name]
-                episode[spec.name] = np.array(value, spec.dtype)
-            self._current_episode = defaultdict(list)
-            if self.store_only_success:
-                if self._success:
-                    self._store_episode(episode)
-            else:
-                self._store_episode(episode)
-            self._success = False
-            
-    def _preload(self):
-        self._num_episodes = 0
-        self._num_transitions = 0
-        for fn in self._replay_dir.glob('*.npz'):
-            _, _, eps_len = fn.stem.split('_')
-            self._num_episodes += 1
-            self._num_transitions += int(eps_len)
-
-    def _store_episode(self, episode):
-        eps_idx = self._num_episodes
-        eps_len = episode_len(episode)
-        self._num_episodes += 1
-        self._num_transitions += eps_len
-        ts = datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
-        eps_fn = f'{ts}_{eps_idx}_{eps_len}.npz'
-        save_episode(episode, self._replay_dir / eps_fn)
-
-
 class ReplayBuffer(IterableDataset):
-    def __init__(self, replay_dir, max_size, num_workers, nstep,
+    def __init__(self, replay_dir, max_traj_per_task, max_size, num_workers, nstep,
                  discount, fetch_every, save_snapshot, 
                  rank=None, world_size=None,
                  n_code=None, vocab_size=None,
                  min_frequency=None, max_token_length=None):
         self._replay_dir = replay_dir if type(replay_dir) == list else [replay_dir]
+        self._max_traj_per_task = max_traj_per_task
         self._size = 0
         self._max_size = max_size
         self._num_workers = max(1, num_workers)
@@ -141,37 +90,10 @@ class ReplayBuffer(IterableDataset):
             eps_fn.unlink(missing_ok=True)
         return True
 
-    def _try_fetch(self):
-        if self._samples_since_last_fetch < self._fetch_every:
-            return
-        self._samples_since_last_fetch = 0
-        try:
-            worker_id = torch.utils.data.get_worker_info().id
-        except:
-            worker_id = 0
-
-        eps_fns = []
-        for replay_dir in self._replay_dir.glob('*.npz'):        
-            eps_fns.extend(sorted(replay_dir.glob('*.npz'), reverse=True))
-        fetched_size = 0
-        for eps_fn in eps_fns:
-            eps_idx, eps_len = [int(x) for x in eps_fn.stem.split('_')[1:]]
-            if eps_idx % self._num_workers != worker_id:
-                continue
-            if self.rank is not None and eps_idx % self.world_size != self.rank:
-                continue
-            if eps_fn in self._episodes.keys():
-                break
-            if fetched_size + eps_len > self._max_size:
-                break
-            fetched_size += eps_len
-            if not self._store_episode(eps_fn):
-                break
-    
     def _preload(self):
         eps_fns = []
-        for replay_dir in self._replay_dir:        
-            eps_fns.extend(sorted(replay_dir.glob('*.npz'), reverse=True))
+        for replay_dir in self._replay_dir:
+            eps_fns.extend(utils.choose(sorted(replay_dir.glob('*.npz'), reverse=True), self._max_traj_per_task))
         for eps_fn in eps_fns:
             eps_idx, eps_len = [int(x) for x in eps_fn.stem.split('_')[1:]]
             if self.rank is not None and eps_idx % self.world_size != self.rank:
@@ -218,39 +140,15 @@ def _worker_init_fn(worker_id):
     np.random.seed(seed)
     random.seed(seed)
 
-
-def make_replay_loader(replay_dir, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, discount, n_code=None, 
-                       vocab_size=None, min_frequency=None, 
-                        max_token_length=None):
-    max_size_per_worker = max_size // max(1, num_workers)
     
-    iterable = ReplayBuffer(replay_dir,
-                            max_size_per_worker,
-                            num_workers,
-                            nstep,
-                            discount,
-                            fetch_every=1000,
-                            save_snapshot=save_snapshot,
-                            n_code=n_code,
-                            vocab_size=vocab_size,
-                            min_frequency=min_frequency, 
-                            max_token_length=max_token_length)
-
-    loader = torch.utils.data.DataLoader(iterable,
-                                         batch_size=batch_size,
-                                         num_workers=num_workers,
-                                         pin_memory=False,
-                                         worker_init_fn=_worker_init_fn)
-    return loader
-
-def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
+def make_replay_loader_dist(replay_dir, max_traj_per_task, max_size, batch_size, num_workers,
                        save_snapshot, nstep, discount, rank, world_size, 
                         n_code=None, vocab_size=None, min_frequency=None, 
                         max_token_length=None):
     max_size_per_worker = max_size // max(1, num_workers)
     
     iterable = ReplayBuffer(replay_dir,
+                            max_traj_per_task,
                             max_size_per_worker,
                             num_workers,
                             nstep,
@@ -270,7 +168,7 @@ def make_replay_loader_dist(replay_dir, max_size, batch_size, num_workers,
                                          pin_memory=False,
                                          worker_init_fn=_worker_init_fn)
     return loader
- 
+
  
 
 

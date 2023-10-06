@@ -143,6 +143,12 @@ def set_seed_everywhere(seed):
     random.seed(seed)
 
 
+def choose(traj_list, max_traj):
+    # NOTE: this assumes that random's seed has been set.
+    random.shuffle(traj_list)
+    return (traj_list if max_traj < 0 else traj_list[:max_traj])
+
+
 def soft_update_params(net, target_net, tau):
     for param, target_param in zip(net.parameters(), target_net.parameters()):
         target_param.data.copy_(tau * param.data +

@@ -72,6 +72,7 @@ hps_dict:
 config:
   # seed: randint  # keys here do not need to appear in hps_dict
   # 'randint' is a reserved phrase, which would generate random seeds at runtime.
+  log_root_dir: ../results  # for mirroring the results
   data_storage_dir: $datastore/taa_data/
   task_data_dir_suffix: null
   results_dir: $datastore/taa_results/

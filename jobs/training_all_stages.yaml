@@ -54,7 +54,7 @@ setup_cmds:   # This starts from the `dilbert` directory.
 # A dict that specifies the values of hyperparameters to search over.
 hps_dict:
   stage_1_batch_size: [256] #[4096]
-  stage_1_and_2_max_traj_per_task: [10] #[25] #[100]
+  stage_1_and_2_max_traj_per_task: [100]
   stage_3_batch_size: [256]
   stage_3_downstream_task_name: [hand-insert]
   stage_3_max_traj_per_task: [5]

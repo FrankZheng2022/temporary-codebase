@@ -1,0 +1,65 @@
+defaults:
+  - _self_
+  - task@_global_: quadruped_walk
+  - override hydra/launcher: submitit_local
+
+# task_names: ['assembly', 'basketball'] # for testing
+# task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push'] # for testing mt-19
+
+# Stage-shared
+feature_dim: 100
+hidden_dim: 1024
+data_storage_dir: /mount_point/offline_data_mw
+task_data_dir_suffix: ''
+results_dir: /mount_point/taa_results
+exp_name: taa
+obs_dependent: true
+n_code: 200
+vocab_size: 200
+min_frequency: 5
+max_token_length: 20
+nstep: 3 # TODO: What is nstep exactly? Is it for spr prediction? Does it mean we need it only for stage 1?
+seed: 1
+log_root_dir: exp_local
+
+stage_1_and_2_task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
+stage_1_and_2_max_traj_per_task: 100
+base_port: 12235
+
+# Stage-specific user-specified
+stage_1_batch_size: 256
+stage_1_lr: 1e-4
+stage_1_replay_buffer_num_workers: 4
+stage_1_eval_freq: 5000
+stage_1_num_train_steps: 100100
+
+stage_2_batch_size: 256
+stage_2_lr: 1e-4
+stage_2_replay_buffer_num_workers: 4
+stage_2_eval_freq: 5000
+
+stage_3_batch_size: 256
+stage_3_lr: 1e-4
+stage_3_replay_buffer_num_workers: 4
+stage_3_eval_freq: 5000
+stage_3_downstream_task_name: hand-insert
+stage_3_max_traj_per_task: 5
+stage_3_num_train_steps: 100100
+num_eval_episodes: 40
+exp_bc_name: default
+
+
+hydra:
+  run:
+    dir: ./${log_root_dir}/${exp_name}
+  sweep:
+    dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}
+    subdir: ${hydra.job.num}
+  launcher:
+    timeout_min: 4300
+    cpus_per_task: 10
+    gpus_per_node: 1
+    tasks_per_node: 1
+    mem_gb: 160
+    nodes: 1
+    submitit_folder: ./exp/${now:%Y.%m.%d}/${now:%H%M%S}/.slurm

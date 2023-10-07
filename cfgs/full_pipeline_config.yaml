@@ -20,7 +20,6 @@ min_frequency: 5
 max_token_length: 20
 nstep: 3 # TODO: What is nstep exactly? Is it for spr prediction? Does it mean we need it only for stage 1?
 seed: 1
-log_root_dir: exp_local
 
 stage_1_and_2_task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
 stage_1_and_2_max_traj_per_task: 100

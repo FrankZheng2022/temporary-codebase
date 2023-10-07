@@ -311,14 +311,10 @@ class Workspace:
             self.tokenizer, corpus, traj_names = loaded_data
 
         #### Tokenizer the given trajectories and check the number of unique tokens in the given demonstration trajectories
-        lst_traj = []
-        path = construct_task_data_path(self.cfg.data_storage_dir, self.cfg.downstream_task_name, self.cfg.task_data_dir_suffix)
-        lst_traj = utils.choose(list(sorted(path.glob('*.npz'))), self.cfg.max_traj_per_task)
+        replay_buffer = self.replay_loader.dataset  # HACK
         self.tok_to_idx = dict() ### Token, Index Lookup
         self.idx_to_tok = []
-        for f in lst_traj:
-            with np.load(f) as e:
-                episode = dict(e)
+        for episode in replay_buffer._episodes.values():
             with torch.no_grad():
                 obs, action = episode['observation'], episode['action']
                 obs = torch.from_numpy(obs).to(self.device)
@@ -330,6 +326,7 @@ class Workspace:
                 min_encoding_indices = [int(idx) for idx in min_encoding_indices]
 
             traj_tok = [self.tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
+            episode['token'] = traj_tok
             for tok in traj_tok:
                 if not tok in self.tok_to_idx:
                     self.tok_to_idx[tok] = len(self.tok_to_idx)

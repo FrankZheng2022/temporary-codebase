@@ -53,28 +53,26 @@ setup_cmds:   # This starts from the `dilbert` directory.
 ### Hyperparameter setting
 # A dict that specifies the values of hyperparameters to search over.
 hps_dict:
-  stage_1_batch_size: [256] #[4096]
-  stage_1_and_2_max_traj_per_task: [100]
-  stage_3_batch_size: [256]
-  stage_3_downstream_task_name: [hand-insert]
+  stage_3_downstream_task_name: [door-lock,door-unlock,hand-insert,bin-picking,box-close]
   stage_3_max_traj_per_task: [5]
   vocab_size: [200]
   min_frequency: [100]
   max_token_length: [20]
-  seed: [1]
+  seed: [1,2,3]
 
 # (optional) A dict that specifies the default values of hyperparameters. This
 # is meant to overwrite the default hyperparameter used in the method.
 # Therefore, this is optional, and keys here do not necessary have to appear in
 # `hps_dict` (vice versa)
 config:
-  starting_stage: 1
   # seed: randint  # keys here do not need to appear in hps_dict
   # 'randint' is a reserved phrase, which would generate random seeds at runtime.
+  starting_stage: 3
   log_root_dir: ../results  # for mirroring the results
   data_storage_dir: $datastore/taa_data/
   task_data_dir_suffix: null
-  results_dir: $datastore/taa_results/
+  # NOTE: set this dir to the path to the location of the snapshot that should be finetuned.
+  results_dir: $datastore/taa_results/21.13.43--10-06-2023
   exp_name: taa
   n_code: 10
   nstep: 3
@@ -84,10 +82,8 @@ config:
   min_frequency: 5
   max_token_length: 20
   num_eval_episodes: 30
-  stage_1_num_train_steps: 2000
-  stage_1_eval_freq: 500
-  stage_3_num_train_steps: 2000
-  stage_3_eval_freq: 500
+  stage_3_num_train_steps: 2000 #100100
+  stage_3_eval_freq: 500 #5000
 
 
 n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
@@ -97,9 +93,9 @@ n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
 # compute_target: azb-westus2
 # vm_size: Standard_NC4as_T4_v3
 
+# NOTE: 1-GPU VMs are enough for finetuning.
 # compute_target: sing-msrresrchvc-V100
-#compute_target: sing-msrresrchvc-P100
-compute_target: sing-msrresrchvc-4xP100
+compute_target: sing-msrresrchvc-P100
 # compute_target: sing-msrresrchvc-P40
 # compute_target: sing-msrrlvc-T4 # Name of the compute resource.
 

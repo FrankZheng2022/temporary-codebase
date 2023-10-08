@@ -6,6 +6,8 @@ defaults:
 # task_names: ['assembly', 'basketball'] # for testing
 # task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push'] # for testing mt-19
 
+starting_stage: 1
+
 # Stage-shared
 feature_dim: 100
 hidden_dim: 1024
@@ -46,7 +48,7 @@ stage_3_downstream_task_name: hand-insert
 stage_3_max_traj_per_task: 5
 stage_3_num_train_steps: 100100
 num_eval_episodes: 40
-exp_bc_name: default
+exp_bc_name: ft
 
 
 hydra:

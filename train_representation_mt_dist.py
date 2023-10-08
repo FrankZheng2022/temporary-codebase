@@ -91,7 +91,7 @@ class Workspace:
                 offline_data_dir = construct_task_data_path(self.cfg.data_storage_dir, task_name, self.cfg.task_data_dir_suffix)
                 self.pretraining_data_dirs.append(offline_data_dir)
         else:
-            task_name = self.cfg.task_names[0]
+            task_name = self.cfg.downstream_task_name
             self.eval_env = mw.make(task_name, self.cfg.frame_stack,
                                     self.cfg.action_repeat, self.cfg.seed, train=False)
 
@@ -205,7 +205,7 @@ class Workspace:
         #print('=====================Begin Evaluation=====================')
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
 
-        eval_env, task_name = self.eval_env, self.cfg.task_names[0]
+        eval_env, task_name = self.eval_env, self.cfg.downstream_task_name
         counter, step, episode, total_reward, success = 0, 0, 0, 0, 0
         while eval_until_episode(episode):
             time_step = eval_env.reset()
@@ -311,6 +311,7 @@ class Workspace:
             self.tokenizer, corpus, traj_names = loaded_data
 
         #### Tokenizer the given trajectories and check the number of unique tokens in the given demonstration trajectories
+        print("========= Tokenizing the downstream data... ==========")
         replay_buffer = self.replay_loader.dataset  # HACK
         self.tok_to_idx = dict() ### Token, Index Lookup
         self.idx_to_tok = []
@@ -332,7 +333,7 @@ class Workspace:
                     self.tok_to_idx[tok] = len(self.tok_to_idx)
                     self.idx_to_tok.append(tok)
 
-
+        print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
         self.agent.train(False)
         meta_policy = nn.Sequential(
             nn.Linear(self.cfg.feature_dim, self.cfg.hidden_dim),
@@ -365,15 +366,16 @@ class Workspace:
             metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx)
 
             if self.global_step%self.cfg.eval_freq == 0:
-                if len(self.cfg.task_names) == 1:
+                # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
+                if self.cfg.stage == 3:
                     self.eval_st()
                 else:
                     self.eval_mt45()
         if self.global_step%self.cfg.eval_freq == 0:
-            if len(self.cfg.task_names) == 1:
+            # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
+            if self.cfg.stage == 3:
                 self.eval_st()
             else:
-
                 self.eval_mt45()
 
 
@@ -381,7 +383,7 @@ class Workspace:
         if stage == 1:
             snapshot = self.results_dir / 'snapshot.pt'
         else:
-            snapshot = self.results_dir / 'snapshot_vocab{}.pt'.format(self.cfg.vocab_size)
+            snapshot = self.results_dir / 'eval'/ 'snapshot_vocab{}_{}.pt'.format(self.cfg.vocab_size, self.cfg.seed)
 
         keys_to_save = ['agent', '_global_step']
         payload = {k: self.__dict__[k] for k in keys_to_save}

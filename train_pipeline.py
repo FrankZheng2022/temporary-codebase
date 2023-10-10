@@ -11,6 +11,7 @@ def main(cfg):
         timenow = time.strftime("%H.%M.%S--%m-%d-%Y")
         results_dir = Path(cfg.results_dir) / timenow
     else:
+        # NOTE: for stages 2 and 3, cfg.results_dir is presumably set to the location of the snapshot from stage 1.
         results_dir = cfg.results_dir
 
     stage_list = []
@@ -52,7 +53,7 @@ def main(cfg):
         stage_list.append(stage_1_overrides)
         stage_id_list.append(1)
 
-    if cfg.starting_stage <= 2:
+    if cfg.starting_stage <= 2 and cfg.final_stage >= 2:
         stage_2_overrides = [
                                 #--- Stage-specific *user-specified* overrides ---
                                 f"stage=2",
@@ -70,7 +71,7 @@ def main(cfg):
         stage_list.append(stage_2_overrides)
         stage_id_list.append(2)
 
-    if cfg.starting_stage <= 3:
+    if cfg.starting_stage <= 3 and cfg.final_stage >= 3:
         stage_3_overrides = [
                                 #--- Stage-specific *user-specified* overrides ---
                                 f"stage=3",
@@ -78,6 +79,7 @@ def main(cfg):
                                 f"lr={cfg.stage_3_lr}",
                                 f"replay_buffer_num_workers={cfg.stage_3_replay_buffer_num_workers}",
                                 f"eval_freq={cfg.stage_3_eval_freq}",
+                                f"save_snapshot={cfg.stage_3_save_snapshot}",
                                 f"task_names=None",
                                 f"num_eval_episodes={cfg.num_eval_episodes}",
                                 # NOTE: For stage 3, we probably want to run finetuning for all tasks in parallel, so we should feed the tasks one at a time.
@@ -85,7 +87,6 @@ def main(cfg):
                                 f"max_traj_per_task={cfg.stage_3_max_traj_per_task}",
                                 f"num_train_steps={cfg.stage_3_num_train_steps}",
                                 #--- Stage-specific *logic-imposed* overrides ---
-                                # TODO: when/if running the finetuning for different tasks in parallel, make sure that the ports are different?
                                 f"port={cfg.base_port+2}",
                                 f"exp_bc_name={cfg.stage_3_downstream_task_name + '__' + str(cfg.exp_bc_name) + '__' + str(cfg.seed)}"
                             ]

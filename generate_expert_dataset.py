@@ -132,7 +132,7 @@ class Workspace:
         while self._global_episode < self.cfg.num_expert_trajectories:
             if time_step['success'] == 1.0:
                 success = True
-            if time_step.last(): #or success:
+            if time_step.last() or success:
                 if success:
                     self._global_episode += 1
                     if self._global_episode % 5 == 0:

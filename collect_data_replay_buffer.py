@@ -57,7 +57,7 @@ class ReplayBufferStorage:
             self._current_episode[spec.name].append(value)
         if time_step['success'] == 1.0:
             self._success = True
-        if time_step.last(): #or self._success:
+        if time_step.last() or self._success:
             episode = dict()
             for spec in self._data_specs:
                 value = self._current_episode[spec.name]

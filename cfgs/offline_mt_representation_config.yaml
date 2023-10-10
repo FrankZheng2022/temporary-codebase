@@ -30,7 +30,7 @@ max_token_length: 20
 
 exp_bc_name: default
 
-
+bc: false
 taco: true
 num_train_steps: 100100
 trunk: true

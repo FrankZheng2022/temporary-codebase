@@ -141,18 +141,6 @@ class TACO(nn.Module):
         self.action_encoder = ActionEncoder(feature_dim, hidden_dim, action_dim, obs_dependent)
         
         self.a_quantizer = VectorQuantizer(n_code, feature_dim)
-        # self.a_quantizer = VectorQuant(
-        #     feature_size=feature_dim,    # feature dimension corresponding to the vectors
-        #     num_codes=n_code,       # number of codebook vectors
-        #     beta=0.98,          # (default: 0.95) commitment trade-off
-        #     kmeans_init=False,   # (default: False) whether to use kmeans++ init
-        #     norm=None,          # (default: None) normalization for input vector
-        #     cb_norm=None,       # (default: None) normalization for codebook vectors
-        #     affine_lr=10.0,     # (default: 0.0) lr scale for affine parameters
-        #     sync_nu=1.0,        # (default: 0.0) codebook synchronization contribution
-        #     replace_freq=20,    # (default: 0) frequency to replace dead codes
-        #     dim=-1              # (default: -1) dimension to be quantized
-        #         )
                             
         self.decoder = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
@@ -194,7 +182,7 @@ class TACORepresentation:
         self.pcgrad = pcgrad
         self.scaler = GradScaler()
         self.feature_dim = feature_dim
-        
+        self.n_code = n_code
         self.encoder = Encoder(obs_shape, feature_dim, 
                                 trunk=trunk).to(device)
         
@@ -213,6 +201,25 @@ class TACORepresentation:
         self.encoder.train(training)
         self.TACO.train(training)
     
+    ### Compute an N by N matrix (each index corresponding)
+    ### to the distance between two codes
+    def cal_distance(self, o_emded):
+        ### For each code, decode it back to the raw action
+        decode_action_lst = []
+        for i in range(self.n_code):
+            learned_code   = self.TACO.module.a_quantizer.embedding.weight
+            u_quantized    = learned_code[code_selected, :]
+            decode_action = self.TACO.module.decoder(o_embed + u_quantized)
+            decode_action_lst.append(decode_action)      
+        ### Calculate the distance
+        code_distance = np.zeros((self.n_code, self.n_code))
+        for i in range(self.n_code):
+            for j in range(self.n_code):
+                decode_action_i = decode_action_lst[i]
+                decode_action_j = decode_action_lst[j]
+                code_distance[i][j] = F.l1_loss(decode_action_i, decode_action_j).item()
+        return code_distance
+            
     
     def update_taco(self, obs, action_seq, next_obs_lst):
         metrics = dict()
@@ -231,8 +238,8 @@ class TACORepresentation:
             quantize_loss += q_loss
             
             ### Decoder Loss
-            #decode_action = self.TACO.module.decoder(o_embed + u_quantized)
-            decode_action = self.TACO.module.decoder(z + u_quantized)
+            decode_action = self.TACO.module.decoder(o_embed + u_quantized)
+            #decode_action = self.TACO.module.decoder(z + u_quantized)
             d_loss = F.l1_loss(decode_action, action_seq[k])
             decoder_loss += d_loss
             
@@ -294,8 +301,8 @@ class TACORepresentation:
         
         return metrics
 
-    ### train multitask bc
-    def update_multitask_bc(self, replay_iter, step):
+    ### train bc
+    def update_bc(self, replay_iter, step):
         metrics = dict()
         batch = next(replay_iter)
         obs, action, _, _, _, _, _ = batch
@@ -304,10 +311,10 @@ class TACORepresentation:
         action = torch.torch.as_tensor(action, device=self.device)
         decode_action = self.TACO.module.decoder(self.TACO.module.encode(obs.float())[0])
         
-        decoder_loss = F.l1_loss(decode_action, action)
+        bc_loss = F.l1_loss(decode_action, action)
         
         self.taco_opt.zero_grad()
-        decoder_loss.backward()
+        bc_loss.backward()
         self.taco_opt.step()
-        metrics['decoder_loss']  = decoder_loss.item()
+        metrics['bc_loss']  = bc_loss.item()
         return metrics

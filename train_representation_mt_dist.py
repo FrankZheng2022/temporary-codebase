@@ -74,7 +74,7 @@ class Workspace:
         self.device = device_ids[rank]
 
         a_dim = self.cfg.action_dim
-        obs_shape = [3*self.cfg.frame_stack]+self.cfg.img_res  #(3*self.cfg.frame_stack,84,84)
+        obs_shape = [3*self.cfg.frame_stack]+list(self.cfg.img_res)  #(3*self.cfg.frame_stack,84,84)
         self.agent = make_agent(obs_shape,
                                 a_dim,
                                 rank,
@@ -126,12 +126,18 @@ class Workspace:
         elif self.cfg.stage == 3:
             downstream_data_path = construct_task_data_path(self.cfg.data_storage_dir, self.cfg.downstream_task_name, self.cfg.task_data_dir_suffix)
             print(f"Loading target task data from {downstream_data_path}")
-            self.replay_loader = make_replay_loader_dist(
-                [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
-                self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
-                n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
-                min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
+            if self.cfg.bc:
+                self.replay_loader = make_replay_loader_dist(
+                    [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
+                    self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
+                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size)
+            else:
+                self.replay_loader = make_replay_loader_dist(
+                    [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
+                    self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
+                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
+                    n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
+                    min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
         else:
             assert self.cfg.stage != 2, "You shouldn't set up the replay buffer for stage 2. Most likely you ended up here due to a logic bug."
 
@@ -157,7 +163,12 @@ class Workspace:
     def act(self, obs, code_buffer):
         obs = torch.from_numpy(obs).to(self.device)
         z = self.agent.encoder(obs.unsqueeze(0))
-
+        
+        ### For Vanilla BC, use decoder to directly predict the raw action
+        if self.cfg.bc:
+            action = self.agent.TACO.module.decoder(z)
+            return [], action.detach().cpu().numpy()[0]
+            
         if len(code_buffer) == 0:
             ### query the meta/option policy
             meta_action = self.agent.TACO.module.meta_policy(z).max(-1)[1]
@@ -173,41 +184,6 @@ class Workspace:
         u = learned_code[code_selected, :]
         action = self.agent.TACO.module.decoder(z + u)
         return code_buffer, action.detach().cpu().numpy()[0]
-
-    def eval_mt45(self):
-        performance = {}
-        # TODO read this from cfg, or maybe we can remove this method; seems obsolete
-        task_lst = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
-
-        for task_name in task_lst:
-            env = mw.make(task_name, 3, 2, self.cfg.seed, device_id=self.device, train=False)
-            reward_total, success = [], 0
-            for i in range(self.cfg.num_eval_episodes):
-                time_step = env.reset()
-                code_buffer = []
-                done, step = False, 0
-                reward = 0
-                while not done and step < 200:
-                    code_buffer, action = self.act(time_step['observation'], code_buffer)
-                    action = np.clip(action, -1, 1.)
-                    time_step = env.step(action)
-                    obs = time_step['observation']
-                    if time_step['success']==1.0:
-                        success += 1
-                        break
-                    step += 1
-                    reward += time_step['reward']
-                reward_total.append(reward)
-            performance[task_name] = success / self.cfg.num_eval_episodes * 100
-            if self.rank == 0:
-                print("===============Task:{} Number of Eval Episodes:{} Success Rate:{}%===============".format(task_name, self.cfg.num_eval_episodes, success / self.cfg.num_eval_episodes * 100))
-
-        if self.rank == 0:
-            eval_dir = self.results_dir / 'eval'
-            eval_dir.mkdir(parents=True, exist_ok=True)
-            save_dir = eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name)
-            with open(save_dir, 'wb') as f:
-                pickle.dump(performance, f)
 
     def eval_st(self):
         #print('=====================Begin Evaluation=====================')
@@ -375,18 +351,43 @@ class Workspace:
                     self.save_snapshot(self.cfg.stage)
 
                 start_eval_block_time = time.time()
-                # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
-                if self.cfg.stage == 3:
-                    self.eval_st()
-                else:
-                    self.eval_mt45()
+                self.eval_st()
                 print(f"Evaluation on {self.cfg.num_eval_episodes} episodes took {time.time() - start_eval_block_time}s.")
 
             metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx)
 
+            
+    def train_bc(self):
+        metrics = None
+        while self.global_step < self.cfg.num_train_steps:
+            if self.global_step%100 == 0 and self.rank == 0:
+                # wait until all the metrics schema is populated
+                if metrics is not None:
+                    # log stats
+                    print('BC_LOSS:{}'.format(metrics['bc_loss']))
+                    elapsed_time, total_time = self.timer.reset()
+                    with self.logger.log_and_dump_ctx(self.global_step,
+                                                      ty='train') as log:
+                        log('total_time', total_time)
+                        log('step', self.global_step)
 
+                # reset env
+                # try to save snapshot
+                if self.cfg.save_snapshot and self.rank == 0:
+                    self.save_snapshot(self.cfg.stage)
+            
+            if self.global_step%self.cfg.eval_freq == 0:
+                self.eval_st()
+            self._global_step += 1
+            metrics = self.agent.update_bc(self.replay_iter, self.global_step)
+            self.logger.log_metrics(metrics, self.global_step, ty='train')
+
+        dest_log_dir = self.results_dir / 'logs'
+        distutils.dir_util.copy_tree(str(self.logger._log_dir), str(dest_log_dir))
+            
     def save_snapshot(self, stage):
         if stage == 1:
+            self.results_dir.mkdir(parents=True, exist_ok=True)
             snapshot = self.results_dir / 'snapshot.pt'
         elif stage == 2:
             snapshot = self.results_dir / 'snapshot_vocab{}.pt'.format(self.cfg.vocab_size)
@@ -432,12 +433,15 @@ def main(cfg):
     workspace = W(cfg, RANK, WORLD_SIZE)
     root_dir = Path.cwd()
     snapshot = root_dir / 'snapshot.pt'
-    if snapshot.exists() and cfg.stage > 1:
+    if snapshot.exists() and cfg.stage > 1 and (not cfg.bc):
         print(f'resuming: {snapshot}')
         workspace.load_snapshot()
     if cfg.train_multitask_bc:
         workspace.train_multitask_bc()
     else:
+        ### Train Vanilla BC if bc=True
+        if cfg.bc:
+            workspace.train_bc()
         if cfg.stage == 1:
             workspace.pretrain_models()
         elif cfg.stage == 2:

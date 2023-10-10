@@ -43,7 +43,7 @@ exp_name: default
 
 hydra:
   run:
-    dir: ./online_exp_local/${exp_name}
+    dir: ./exp_local/${exp_name}
   sweep:
     dir: ./exp/${now:%Y.%m.%d}/${now:%H%M}_${agent_cfg.experiment}
     subdir: ${hydra.job.num}

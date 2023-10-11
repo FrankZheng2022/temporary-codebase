@@ -6,6 +6,7 @@ import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 import os
+import time
 os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
 os.environ['MUJOCO_GL'] = 'egl'
 from pathlib import Path
@@ -21,7 +22,7 @@ from metaworld.policies import *
 import utils
 import shutil
 from logger import Logger
-from collect_data_replay_buffer import ReplayBufferStorage, make_replay_loader
+from collect_data_replay_buffer import ReplayBufferStorage
 from video import TrainVideoRecorder, VideoRecorder
 
 torch.backends.cudnn.benchmark = True
@@ -55,10 +56,6 @@ class Workspace:
         utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
         self.setup()
-
-        # self.agent = make_agent(self.train_env.observation_spec(),
-        #                         self.train_env.action_spec(),
-        #                         self.cfg.agent)
         self.timer = utils.Timer()
         self._global_step = 0
         self._global_episode = 0
@@ -76,8 +73,9 @@ class Workspace:
         else:
             assert False
        
-        clean(self.cfg.offline_data_dir)
         offline_data_dir = Path(self.cfg.offline_data_dir)
+        # Delete all the previously generated trajectories for this task
+        clean(offline_data_dir / self.cfg.task_name)
         # create replay buffer
         data_specs = (self.train_env.observation_spec(),
                       self.train_env.state_spec(), #for dmc
@@ -88,12 +86,6 @@ class Workspace:
         self.replay_storage = ReplayBufferStorage(data_specs,
                                                   offline_data_dir,
                                                   store_only_success=True)
-
-        self.replay_loader = make_replay_loader(
-            offline_data_dir, self.cfg.replay_buffer_size,
-            self.cfg.batch_size, self.cfg.replay_buffer_num_workers,
-            True, self.cfg.nstep, self.cfg.multistep, self.cfg.discount)
-        self._replay_iter = None
 
     @property
     def global_step(self):
@@ -106,12 +98,6 @@ class Workspace:
     @property
     def global_frame(self):
         return self.global_step * self.cfg.action_repeat
-
-    @property
-    def replay_iter(self):
-        if self._replay_iter is None:
-            self._replay_iter = iter(self.replay_loader)
-        return self._replay_iter
 
     def generate(self):
         # predicates

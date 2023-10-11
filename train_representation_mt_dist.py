@@ -14,6 +14,7 @@ from pathlib import Path
 import distutils.dir_util
 import hydra
 import numpy as np
+import time
 import torch
 import torch.nn as nn
 import random
@@ -97,6 +98,13 @@ class Workspace:
 
         #### Don't need to load the data in the second stage (calculating BPE)
         assert self.cfg.stage in [1, 2, 3], "Stage must be 1, 2, or 3."
+
+        if self.cfg.stage < 3:
+            self.eval_dir = self.results_dir
+        else:
+            self.eval_dir = self.results_dir / 'eval' / f'stage_{self.cfg.stage}' / self.cfg.downstream_task_name
+        self.eval_dir.mkdir(parents=True, exist_ok=True)
+
         if self.cfg.stage == 2:
             return
         self.setup_replay_buffer()
@@ -202,17 +210,17 @@ class Workspace:
 
         print('Success Rate:{}'.format(success/self.cfg.num_eval_episodes*100))
         self.performance.append(success/self.cfg.num_eval_episodes*100)
-        eval_dir = self.results_dir / 'eval'
-        eval_dir.mkdir(parents=True, exist_ok=True)
         if self.rank == 0:
-            with open(eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name), 'wb') as f:
+            with open(self.eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name), 'wb') as f:
                 pickle.dump(self.performance, f)
             #print('=======================End Evaluation=======================')
 
     def pretrain_models(self):
         metrics = None
+        start_train_block_time = time.time()
         while self.global_step < self.cfg.num_train_steps:
-            if self.global_step%100 == 0 and self.rank == 0:
+            if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
+                print(f"\nPretraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s.")
                 # wait until all the metrics schema is populated
                 if metrics is not None:
                     # log stats
@@ -368,6 +376,7 @@ class Workspace:
         idx_distance = idx_distance.to(self.device)
         
         print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
+        print(f"========= Initiaizing the model... ==========")
         self.agent.train(False)
         meta_policy = nn.Sequential(
             nn.Linear(self.cfg.feature_dim, self.cfg.hidden_dim),
@@ -383,8 +392,12 @@ class Workspace:
         tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False)[0] ### Token =>  First Code
         tok_to_idx  = lambda tok: self.tok_to_idx[int(tok.item())] ### Token => Index
 
+        print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
+        start_train_block_time = time.time()
         while self.global_step < self.cfg.num_train_steps:
-            if self.global_step%1000 == 0 and self.rank == 0:
+            self._global_step += 1
+            if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
+                print(f"\nTraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s (including eval time).")
                 # wait until all the metrics schema is populated
                 if metrics is not None:
                     # log stats
@@ -401,10 +414,9 @@ class Workspace:
 
             if self.global_step>5000 and self.global_step%self.cfg.eval_freq == 0:
                 # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
+                start_eval_block_time = time.time()
                 self.eval_st()
-        # if self.global_step%self.cfg.eval_freq == 0:
-        #     # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
-        #     self.eval_st()
+                print(f"Evaluation on {self.cfg.num_eval_episodes} episodes took {time.time() - start_eval_block_time}s.")
 
 
             
@@ -440,10 +452,10 @@ class Workspace:
         if stage == 1:
             self.results_dir.mkdir(parents=True, exist_ok=True)
             snapshot = self.results_dir / 'snapshot.pt'
+        elif stage == 2:
+            snapshot = self.results_dir / 'snapshot_vocab{}.pt'.format(self.cfg.vocab_size)
         else:
-            eval_dir = self.results_dir / 'eval'
-            eval_dir.mkdir(parents=True, exist_ok=True)
-            snapshot = eval_dir / 'snapshot_vocab{}_{}.pt'.format(self.cfg.vocab_size, self.cfg.seed)
+            snapshot = self.eval_dir / 'snapshot_vocab{}_{}.pt'.format(self.cfg.vocab_size, self.cfg.seed)
 
         keys_to_save = ['agent', '_global_step']
         payload = {k: self.__dict__[k] for k in keys_to_save}

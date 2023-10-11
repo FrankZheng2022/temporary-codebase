@@ -53,6 +53,8 @@ setup_cmds:   # This starts from the `dilbert` directory.
 ### Hyperparameter setting
 # A dict that specifies the values of hyperparameters to search over.
 hps_dict:
+  stage_3_lr: [1e-4]
+  stage_3_batch_size: [128]
   stage_3_downstream_task_name: [door-lock,door-unlock,hand-insert,bin-picking,box-close]
   stage_3_max_traj_per_task: [5]
   vocab_size: [200]
@@ -68,11 +70,12 @@ config:
   # seed: randint  # keys here do not need to appear in hps_dict
   # 'randint' is a reserved phrase, which would generate random seeds at runtime.
   starting_stage: 3
+  final_stage: 3
   log_root_dir: ../results  # for mirroring the results
   data_storage_dir: $datastore/taa_data/
   task_data_dir_suffix: null
   # NOTE: set this dir to the path to the location of the snapshot that should be finetuned.
-  results_dir: $datastore/taa_results/21.13.43--10-06-2023
+  results_dir: $datastore/taa_results/split_1/02.47.20--10-09-2023/
   exp_name: taa
   n_code: 10
   nstep: 3
@@ -82,8 +85,9 @@ config:
   min_frequency: 5
   max_token_length: 20
   num_eval_episodes: 30
-  stage_3_num_train_steps: 2000 #100100
-  stage_3_eval_freq: 500 #5000
+  stage_3_num_train_steps: 10100
+  stage_3_eval_freq: 5000
+  stage_3_save_snapshot: false
 
 
 n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.

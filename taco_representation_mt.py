@@ -203,12 +203,12 @@ class TACORepresentation:
     
     ### Compute an N by N matrix (each index corresponding)
     ### to the distance between two codes
-    def cal_distance(self, o_emded):
+    def cal_distance(self, o_embed):
         ### For each code, decode it back to the raw action
         decode_action_lst = []
         for i in range(self.n_code):
             learned_code   = self.TACO.module.a_quantizer.embedding.weight
-            u_quantized    = learned_code[code_selected, :]
+            u_quantized    = learned_code[i, :]
             decode_action = self.TACO.module.decoder(o_embed + u_quantized)
             decode_action_lst.append(decode_action)      
         ### Calculate the distance
@@ -271,7 +271,8 @@ class TACORepresentation:
         metrics.update(self.update_taco(obs, action_seq, next_obs_lst))
         return metrics
     
-    def update_metapolicy(self, replay_iter, step, tok_to_code, tok_to_idx):
+    def update_metapolicy(self, replay_iter, step, tok_to_code, 
+                          tok_to_idx, idx_distance, cross_entropy=False):
         metrics = dict()
         batch = next(replay_iter)
         obs, action, tok, _, _, _, _ = batch
@@ -285,10 +286,16 @@ class TACORepresentation:
             code  = [tok_to_code(x) for x in tok]
             index = torch.tensor([tok_to_idx(x) for x in tok]).long().to(self.device)
             u_quantized = self.TACO.module.a_quantizer.embedding.weight[code, :]
-            
+        
         meta_action = self.TACO.module.meta_policy(z.detach())
-        meta_policy_loss = F.cross_entropy(meta_action, index)
-
+        if cross_entropy:
+            meta_policy_loss = F.cross_entropy(meta_action, index)
+        else:
+            meta_action = F.softmax(meta_action)
+            meta_policy_loss = torch.mean(torch.sum(meta_action*idx_distance[:, index].T,dim=-1))
+            
+        
+        
         decode_action = self.TACO.module.decoder((z + u_quantized).detach())
         decoder_loss = F.l1_loss(decode_action, action)
         

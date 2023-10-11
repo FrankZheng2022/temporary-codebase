@@ -57,7 +57,7 @@ def make_agent(obs_shape, action_dim, rank, cfg):
 
 
 def construct_task_data_path(root_dir, task_name, task_data_dir_suffix):
-    return Path(root_dir) / (task_name+('' if not task_data_dir_suffix or task_data_dir_suffix == 'None' else task_data_dir_suffix))
+    return Path(root_dir) / (task_name+('' if not task_data_dir_suffix or task_data_dir_suffix == 'None' else task_data_dir_suffix)) 
 
 
 class Workspace:
@@ -235,18 +235,18 @@ class Workspace:
         dest_log_dir = self.results_dir / 'logs'
         distutils.dir_util.copy_tree(str(self.logger._log_dir), str(dest_log_dir))
 
-
+    
     def train_bpe(self):
+        self.agent.n_code = self.cfg.n_code
         self.agent.TACO.train(False)
         lst_traj = []
         for task_dir in self.pretraining_data_dirs:
             lst_traj.extend(utils.choose(list(sorted(task_dir.glob('*.npz'))), self.cfg.max_traj_per_task))
 
         print('Loaded {} trajectories'.format(len(lst_traj)))
-        traj_names = []
         ### Train BPE tokenizer
         counter = 0
-        corpus = []
+        traj_names, corpus, code_distance_lst = [], [], []
         for f in lst_traj:
             counter += 1
             try:
@@ -257,35 +257,85 @@ class Workspace:
             obs = torch.from_numpy(obs).to(self.device)
             action = torch.from_numpy(action).to(self.device)
             z = self.agent.encoder(obs.float())
+            with torch.no_grad():
+                code_distance = self.agent.cal_distance(z)
+                code_distance_lst.append(code_distance[None, :])
+            
             u = self.agent.TACO.module.action_encoder(z, action)
             _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
             min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
             min_encoding_indices = [int(idx) for idx in min_encoding_indices]
-            corpus.append(min_encoding_indices)
+            ### calculate code_distance
+            for t in range(len(min_encoding_indices)):
+                corpus.append(min_encoding_indices[t:])
             traj_names.append(str(f))
 
             if counter % 100 == 0:
                 print(f"Processed {counter} trajectories")
 
         print('=========Offline Data Tokenized!==========')
-
+        
+        
         ### Train tokenizer on the tokenized pretraining trajectories
         tokenizer = Tokenizer(algo='bpe', vocab_size=self.cfg.vocab_size)
         tokenizer.train(corpus, min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length, verbose=True)
-
+        
+        ### compute the N by N distance matrix for codes
+        code_distance = np.mean(np.vstack(code_distance_lst), axis=0)
+        
+        ### Now calculate the distance matrix for tokens (subtract 1 due to UNK token)
+        ### (Note: this matrix is not symmetric)
+        tok_distance = np.zeros((tokenizer.vocab_size-1, tokenizer.vocab_size-1))
+        for i in range(1, tokenizer.vocab_size):
+            code_seq_i = tokenizer.decode([i], verbose=False)
+            for j in range(1, tokenizer.vocab_size):
+                code_seq_j = tokenizer.decode([j], verbose=False)
+                dist = utils.cal_tok_dist(code_seq_i, code_seq_j, code_distance)
+                tok_distance[i-1][j-1] = dist
+        
+        ### Save pretrained tokenizer
         vocab_dir = self.results_dir / 'vocab'
         vocab_dir.mkdir(parents=True, exist_ok=True)
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
-            pickle.dump([tokenizer, corpus, traj_names], f)
+            pickle.dump([tokenizer, corpus, traj_names, code_distance, tok_distance], f)
+    
+#     def cal_distance_code(self):
+#         self.agent.n_code = self.cfg.n_code
+#         self.agent.TACO.train(False)
+#         lst_traj = []
+#         for task_dir in self.pretraining_data_dirs:
+#             lst_traj.extend(utils.choose(list(sorted(task_dir.glob('*.npz'))), self.cfg.max_traj_per_task))
 
+#         print('Loaded {} trajectories'.format(len(lst_traj)))
+#         ### Calculate State Embedding
+#         code_distance_lst, counter = [], 0
+#         for f in lst_traj:
+#             counter += 1
+#             try:
+#                 episode = np.load(f)
+#             except:
+#                 continue
+#             obs, action = episode['observation'], episode['action']
+#             obs = torch.from_numpy(obs).to(self.device)
+#             with torch.no_grad():
+#                 o_embed = self.agent.encoder(obs.float())
+#                 code_distance = self.agent.cal_distance(o_embed)
+#                 code_distance_lst.append(code_distance[None, :])
+#                 if counter % 100 == 0:
+#                     print(f"Processed {counter} trajectories")
+#         code_distance = np.mean(np.vstack(code_distance_lst), axis=0)
+#         print(code_distance)
+#         with open(self.results_dir / 'vocab_mt45_code10_distance', 'wb') as f:
+#             pickle.dump(code_distance, f)
+        
+    
 
     def train_metapolicy(self):
         metrics = None
         vocab_dir = self.results_dir / 'vocab'
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'rb') as f:
             loaded_data = pickle.load(f)
-            self.tokenizer, corpus, traj_names = loaded_data
-
+            self.tokenizer, corpus, traj_names, code_distance, tok_distance = loaded_data
         #### Tokenizer the given trajectories and check the number of unique tokens in the given demonstration trajectories
         print("========= Tokenizing the downstream data... ==========")
         replay_buffer = self.replay_loader.dataset  # HACK
@@ -308,7 +358,15 @@ class Workspace:
                 if not tok in self.tok_to_idx:
                     self.tok_to_idx[tok] = len(self.tok_to_idx)
                     self.idx_to_tok.append(tok)
-
+                    
+        print("Downstream task use {} learned tokens".format(len(self.tok_to_idx)))
+        ### Calculate distance_metric
+        idx_distance = torch.zeros(len(self.idx_to_tok), len(self.idx_to_tok))
+        for i in range(len(self.idx_to_tok)):
+            for j in range(len(self.idx_to_tok)):
+                idx_distance[i][j] = tok_distance[self.idx_to_tok[i]-1][self.idx_to_tok[j]-1]
+        idx_distance = idx_distance.to(self.device)
+        
         print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
         self.agent.train(False)
         meta_policy = nn.Sequential(
@@ -339,9 +397,9 @@ class Workspace:
                     self.save_snapshot(self.cfg.stage)
 
             self._global_step += 1
-            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx)
+            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx, idx_distance, cross_entropy=self.cfg.cross_entropy)
 
-            if self.global_step%self.cfg.eval_freq == 0:
+            if self.global_step>5000 and self.global_step%self.cfg.eval_freq == 0:
                 # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
                 self.eval_st()
         # if self.global_step%self.cfg.eval_freq == 0:
@@ -353,7 +411,7 @@ class Workspace:
     def train_bc(self):
         metrics = None
         while self.global_step < self.cfg.num_train_steps:
-            if self.global_step%100 == 0 and self.rank == 0:
+            if self.global_step%1000 == 0 and self.rank == 0:
                 # wait until all the metrics schema is populated
                 if metrics is not None:
                     # log stats
@@ -426,23 +484,21 @@ def main(cfg):
     workspace = W(cfg, RANK, WORLD_SIZE)
     root_dir = Path.cwd()
     snapshot = root_dir / 'snapshot.pt'
-    if snapshot.exists() and cfg.stage > 1 and (not cfg.bc):
-        print(f'resuming: {snapshot}')
-        workspace.load_snapshot()
-    if cfg.train_multitask_bc:
-        workspace.train_multitask_bc()
+    if cfg.load_snapshot:
+        if snapshot.exists() and cfg.stage > 1:
+            print(f'resuming: {snapshot}')
+            workspace.load_snapshot()
+    ### Train Vanilla BC if bc=True
+    if cfg.bc:
+        workspace.train_bc()
+    if cfg.stage == 1:
+        workspace.pretrain_models()
+    elif cfg.stage == 2:
+        workspace.train_bpe()
+    elif cfg.stage == 3:
+        workspace.train_metapolicy()
     else:
-        ### Train Vanilla BC if bc=True
-        if cfg.bc:
-            workspace.train_bc()
-        if cfg.stage == 1:
-            workspace.pretrain_models()
-        elif cfg.stage == 2:
-            workspace.train_bpe()
-        elif cfg.stage == 3:
-            workspace.train_metapolicy()
-        else:
-            raise ValueError(f"Invalid stage: {cfg.stage}")
+        raise ValueError(f"Invalid stage: {cfg.stage}")
     destroy_process_group()
 
 def wrapper(rank, world_size, cfg):

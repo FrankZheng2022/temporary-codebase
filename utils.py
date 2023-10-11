@@ -17,6 +17,18 @@ from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 import io
 
+### code_pred: code sequence predicted by the meta-policy
+### code_target: target code sequence provided by the tokenizer
+### code_dist: pre-computed distance matrix between codes
+def cal_tok_dist(code_pred, code_actual, code_dist):
+    len_match = min(len(code_pred), len(code_actual))
+    dist  = 0.
+    for i in range(len_match):
+        dist += code_dist[code_pred[i]][code_actual[i]]
+    if len(code_pred) < len(code_actual):
+        dist += np.max(code_dist) * (len(code_actual) - len(code_pred))
+    return dist
+
 def tokenize_vocab(traj_tok, vocab_lookup, merges):
     traj_vocab = []
     for i in range(len(traj_tok)):

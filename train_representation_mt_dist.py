@@ -447,25 +447,25 @@ class Workspace:
             
     def train_bc(self):
         metrics = None
+        start_train_block_time = time.time()
         while self.global_step < self.cfg.num_train_steps:
-            if self.global_step%1000 == 0 and self.rank == 0:
-                # wait until all the metrics schema is populated
+            if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
+                print(f"\nTraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s (including eval time).")
                 if metrics is not None:
                     # log stats
                     print('BC_LOSS:{}'.format(metrics['bc_loss']))
                     elapsed_time, total_time = self.timer.reset()
-                    with self.logger.log_and_dump_ctx(self.global_step,
-                                                      ty='train') as log:
-                        log('total_time', total_time)
-                        log('step', self.global_step)
 
                 # reset env
                 # try to save snapshot
                 if self.cfg.save_snapshot and self.rank == 0:
                     self.save_snapshot(self.cfg.stage)
             
-            if self.global_step%self.cfg.eval_freq == 0:
+            if self.global_step>5000 and self.global_step%self.cfg.eval_freq == 0:
+                start_eval_block_time = time.time()
                 self.eval_st()
+                print(f"Evaluation on {self.cfg.num_eval_episodes} episodes took {time.time() - start_eval_block_time}s.")
+                
             self._global_step += 1
             metrics = self.agent.update_bc(self.replay_iter, self.global_step)
             self.logger.log_metrics(metrics, self.global_step, ty='train')

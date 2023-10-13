@@ -281,7 +281,7 @@ class TACORepresentation:
         obs = torch.torch.as_tensor(obs, device=self.device)
         action = torch.torch.as_tensor(action, device=self.device)
         tok = torch.torch.as_tensor(tok, device=self.device).reshape(-1)
-        z = self.encoder(self.aug(obs.float()))
+        z = self.encoder(obs.float())
         with torch.no_grad():
             u = self.TACO.module.action_encoder(z, action)
             _, u_quantized, _, _, min_encoding_indices = self.TACO.module.a_quantizer(u)
@@ -325,7 +325,7 @@ class TACORepresentation:
         obs    = torch.torch.as_tensor(obs, device=self.device)
         action = torch.torch.as_tensor(action, device=self.device)
         code   = torch.torch.as_tensor(code, device=self.device).reshape(-1)
-        z      = self.encoder(obs.float())
+        z      = self.encoder(self.aug(obs.float()))
         with torch.no_grad():
             u = self.TACO.module.action_encoder(z, action)
             _, u_quantized, _, _, min_encoding_indices = self.TACO.module.a_quantizer(u)

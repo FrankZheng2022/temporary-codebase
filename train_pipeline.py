@@ -32,7 +32,14 @@ def main(cfg):
                                 f"max_token_length={cfg.max_token_length}",
                                 f"seed={cfg.seed}",
                              ]
-    
+    if cfg.starting_stage <= 2:
+        if isinstance(cfg.stage_1_and_2_task_names, list):
+            task_names = cfg.stage_1_and_2_task_names
+        elif isinstance(cfg.stage_1_and_2_task_names, str):
+            task_names = cfg.stage_1_and_2_task_names.split(',')
+        else:
+            raise Exception(f"cfg.stage_1_and_2_task_names has an invalid type: {type(cfg.stage_1_and_2_task_names)}")
+
     if cfg.starting_stage == 1:
         stage_1_overrides = [
                                 #--- Stage-specific *user-specified* overrides ---
@@ -41,7 +48,7 @@ def main(cfg):
                                 f"lr={cfg.stage_1_lr}",
                                 f"replay_buffer_num_workers={cfg.stage_1_replay_buffer_num_workers}",
                                 f"eval_freq={cfg.stage_1_eval_freq}",
-                                f"task_names={cfg.stage_1_and_2_task_names}",
+                                f"task_names={task_names}",
                                 f"max_traj_per_task={cfg.stage_1_and_2_max_traj_per_task}",
                                 f"num_train_steps={cfg.stage_1_num_train_steps}",
                                 #--- Stage-specific *logic-imposed* overrides ---
@@ -61,7 +68,7 @@ def main(cfg):
                                 f"lr={cfg.stage_2_lr}",
                                 f"replay_buffer_num_workers={cfg.stage_2_replay_buffer_num_workers}",
                                 f"eval_freq={cfg.stage_2_eval_freq}",
-                                f"task_names={cfg.stage_1_and_2_task_names}",
+                                f"task_names={task_names}",
                                 f"max_traj_per_task={cfg.stage_1_and_2_max_traj_per_task}",
                                 #--- Stage-specific *logic-imposed* overrides ---
                                 f"pcgrad=true",

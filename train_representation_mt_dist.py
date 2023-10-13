@@ -26,6 +26,7 @@ from video import TrainVideoRecorder, VideoRecorder
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.nn.functional as F
 from torch.distributed import init_process_group, destroy_process_group, gather
 #from bpe import compute_pair_freqs, merge_pair, tokenize
 from collections import defaultdict
@@ -58,7 +59,7 @@ def make_agent(obs_shape, action_dim, rank, cfg):
 
 
 def construct_task_data_path(root_dir, task_name, task_data_dir_suffix):
-    return Path(root_dir) / (task_name+('' if not task_data_dir_suffix or task_data_dir_suffix == 'None' else task_data_dir_suffix)) 
+    return Path(root_dir) / (task_name+('' if not task_data_dir_suffix or task_data_dir_suffix == 'None' else task_data_dir_suffix))
 
 
 class Workspace:
@@ -168,7 +169,13 @@ class Workspace:
         if self.cfg.bc:
             action = self.agent.TACO.module.decoder(z)
             return [], action.detach().cpu().numpy()[0]
-            
+        if self.cfg.non_bpe:
+            action_code = self.agent.TACO.module.meta_policy(z).max(-1)[1]
+            learned_code  = self.agent.TACO.module.a_quantizer.embedding.weight
+            u = learned_code[action_code, :]
+            action = self.agent.TACO.module.decoder(z + u)
+            return [], action.detach().cpu().numpy()[0]
+        
         if len(code_buffer) == 0:
             ### query the meta/option policy
             meta_action = self.agent.TACO.module.meta_policy(z).max(-1)[1]
@@ -259,9 +266,9 @@ class Workspace:
             counter += 1
             try:
                 episode = np.load(f)
+                obs, action = episode['observation'], episode['action']
             except:
                 continue
-            obs, action = episode['observation'], episode['action']
             obs = torch.from_numpy(obs).to(self.device)
             action = torch.from_numpy(action).to(self.device)
             z = self.agent.encoder(obs.float())
@@ -274,8 +281,9 @@ class Workspace:
             min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
             min_encoding_indices = [int(idx) for idx in min_encoding_indices]
             ### calculate code_distance
-            for t in range(len(min_encoding_indices)):
-                corpus.append(min_encoding_indices[t:])
+            corpus.append(min_encoding_indices)
+            # for t in range(len(min_encoding_indices)):
+            #     corpus.append(min_encoding_indices[t:])
             traj_names.append(str(f))
 
             if counter % 100 == 0:
@@ -307,36 +315,6 @@ class Workspace:
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'wb') as f:
             pickle.dump([tokenizer, corpus, traj_names, code_distance, tok_distance], f)
     
-#     def cal_distance_code(self):
-#         self.agent.n_code = self.cfg.n_code
-#         self.agent.TACO.train(False)
-#         lst_traj = []
-#         for task_dir in self.pretraining_data_dirs:
-#             lst_traj.extend(utils.choose(list(sorted(task_dir.glob('*.npz'))), self.cfg.max_traj_per_task))
-
-#         print('Loaded {} trajectories'.format(len(lst_traj)))
-#         ### Calculate State Embedding
-#         code_distance_lst, counter = [], 0
-#         for f in lst_traj:
-#             counter += 1
-#             try:
-#                 episode = np.load(f)
-#             except:
-#                 continue
-#             obs, action = episode['observation'], episode['action']
-#             obs = torch.from_numpy(obs).to(self.device)
-#             with torch.no_grad():
-#                 o_embed = self.agent.encoder(obs.float())
-#                 code_distance = self.agent.cal_distance(o_embed)
-#                 code_distance_lst.append(code_distance[None, :])
-#                 if counter % 100 == 0:
-#                     print(f"Processed {counter} trajectories")
-#         code_distance = np.mean(np.vstack(code_distance_lst), axis=0)
-#         print(code_distance)
-#         with open(self.results_dir / 'vocab_mt45_code10_distance', 'wb') as f:
-#             pickle.dump(code_distance, f)
-        
-    
 
     def train_metapolicy(self):
         metrics = None
@@ -349,33 +327,38 @@ class Workspace:
         replay_buffer = self.replay_loader.dataset  # HACK
         self.tok_to_idx = dict() ### Token, Index Lookup
         self.idx_to_tok = []
+        code_distance_lst = []
         for episode in replay_buffer._episodes.values():
             with torch.no_grad():
                 obs, action = episode['observation'], episode['action']
                 obs = torch.from_numpy(obs).to(self.device)
                 action = torch.from_numpy(action).to(self.device)
                 z = self.agent.encoder(obs.float())
+                code_distance = self.agent.cal_distance(z)
+                code_distance_lst.append(code_distance[None, :])
                 u = self.agent.TACO.module.action_encoder(z, action)
                 _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
                 min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
                 min_encoding_indices = [int(idx) for idx in min_encoding_indices]
-
+            
+            
             traj_tok = [self.tokenizer.encode(min_encoding_indices[t:], verbose=False)[0] for t in range(obs.shape[0])]
             episode['token'] = traj_tok
             for tok in traj_tok:
                 if not tok in self.tok_to_idx:
                     self.tok_to_idx[tok] = len(self.tok_to_idx)
                     self.idx_to_tok.append(tok)
-                    
-        print("Downstream task use {} learned tokens".format(len(self.tok_to_idx)))
+        
+        code_distance = np.mean(np.vstack(code_distance_lst), axis=0)   
         ### Calculate distance_metric
         idx_distance = torch.zeros(len(self.idx_to_tok), len(self.idx_to_tok))
         for i in range(len(self.idx_to_tok)):
+            code_seq_i = self.tokenizer.decode([self.idx_to_tok[i]], verbose=False)
             for j in range(len(self.idx_to_tok)):
-                idx_distance[i][j] = tok_distance[self.idx_to_tok[i]-1][self.idx_to_tok[j]-1]
+                code_seq_j = self.tokenizer.decode([self.idx_to_tok[j]], verbose=False)
+                idx_distance[i][j] = utils.cal_tok_dist(code_seq_i, code_seq_j, code_distance)
         idx_distance = idx_distance.to(self.device)
         
-        print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
         print(f"========= Initiaizing the model... ==========")
         self.agent.train(False)
         meta_policy = nn.Sequential(
@@ -389,16 +372,16 @@ class Workspace:
         meta_policy.apply(utils.weight_init)
         self.agent.TACO.module.meta_policy = meta_policy
         self.agent.taco_opt = torch.optim.Adam(self.agent.TACO.parameters(), lr=self.cfg.lr)
-        tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False)[0] ### Token =>  First Code
+        tok_to_code = lambda tok: self.tokenizer.decode([int(tok.item())], verbose=False) ### Token =>  First Code
         tok_to_idx  = lambda tok: self.tok_to_idx[int(tok.item())] ### Token => Index
 
         print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
         start_train_block_time = time.time()
         while self.global_step < self.cfg.num_train_steps:
-            self._global_step += 1
             if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
                 print(f"\nTraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s (including eval time).")
-                # wait until all the metrics schema is populated
+                #print('CE loss:{}'.format(ce_loss))
+                #wait until all the metrics schema is populated
                 if metrics is not None:
                     # log stats
                     print('DECODER_LOSS:{}, META_POLICY_LOSS:{}'.format(metrics['decoder_loss'], metrics['meta_policy_loss']))
@@ -410,7 +393,7 @@ class Workspace:
                     self.save_snapshot(self.cfg.stage)
 
             self._global_step += 1
-            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx, idx_distance, cross_entropy=self.cfg.cross_entropy)
+            metrics = self.agent.update_metapolicy(self.replay_iter, self.global_step, tok_to_code, tok_to_idx, self.idx_to_tok, idx_distance, cross_entropy=self.cfg.cross_entropy)
 
             if self.global_step>5000 and self.global_step%self.cfg.eval_freq == 0:
                 # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
@@ -418,6 +401,48 @@ class Workspace:
                 self.eval_st()
                 print(f"Evaluation on {self.cfg.num_eval_episodes} episodes took {time.time() - start_eval_block_time}s.")
 
+                
+    def train_metapolicy_nonbpe(self):
+        metrics = None
+        
+        ### Tokenize the trajectory
+        print("========= Tokenizing the downstream data... ==========")
+        replay_buffer = self.replay_loader.dataset
+        for episode in replay_buffer._episodes.values():
+            with torch.no_grad():
+                obs, action = episode['observation'], episode['action']
+                obs = torch.from_numpy(obs).to(self.device)
+                action = torch.from_numpy(action).to(self.device)
+                z = self.agent.encoder(obs.float())
+                u = self.agent.TACO.module.action_encoder(z, action)
+                _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
+                min_encoding_indices = list(min_encoding_indices.reshape(-1).detach().cpu().numpy())
+                min_encoding_indices = [int(idx) for idx in min_encoding_indices]
+            episode['token'] = min_encoding_indices
+        
+        print(f"========= Finetuning for {self.cfg.num_train_steps} steps... ==========")
+        start_train_block_time = time.time()
+        while self.global_step < self.cfg.num_train_steps:
+            if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
+                print(f"\nTraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s (including eval time).")
+                if metrics is not None:
+                    # log stats
+                    print('DECODER_LOSS:{}, META_POLICY_LOSS:{}'.format(metrics['decoder_loss'], metrics['meta_policy_loss']))
+                    elapsed_time, total_time = self.timer.reset()
+
+                # reset env
+                # try to save snapshot
+                if self.cfg.save_snapshot and self.rank == 0:
+                    self.save_snapshot(self.cfg.stage)
+
+            self._global_step += 1
+            metrics = self.agent.update_metapolicy_nonbpe(self.replay_iter, self.global_step)
+
+            if self.global_step>5000 and self.global_step%self.cfg.eval_freq == 0:
+                # TODO: we need to leave just one eval method, which should be callable on any number of downstream tasks.
+                start_eval_block_time = time.time()
+                self.eval_st()
+                print(f"Evaluation on {self.cfg.num_eval_episodes} episodes took {time.time() - start_eval_block_time}s.")
 
             
     def train_bc(self):
@@ -508,7 +533,10 @@ def main(cfg):
     elif cfg.stage == 2:
         workspace.train_bpe()
     elif cfg.stage == 3:
-        workspace.train_metapolicy()
+        if cfg.non_bpe:
+            workspace.train_metapolicy_nonbpe()
+        else:
+            workspace.train_metapolicy()
     else:
         raise ValueError(f"Invalid stage: {cfg.stage}")
     destroy_process_group()

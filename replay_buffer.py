@@ -125,7 +125,7 @@ class ReplayBuffer(IterableDataset):
         if self.vocab_size is not None:
             # tok = episode['code{}_vocab{}_minfreq{}_maxtoken{}'.format(self.n_code, self.vocab_size, self.min_frequency, self.max_token_length)][idx]
             tok = episode['token'][idx]
-            return (obs, action, tok, reward, discount, next_obs, next_obs_lst)
+            return (obs, action, tok, action_seq, next_obs_lst)
         else:
             return (obs, action, action_seq, reward, discount, next_obs, next_obs_lst)
 

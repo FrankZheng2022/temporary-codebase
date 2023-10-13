@@ -251,8 +251,9 @@ class TACORepresentation:
             z = self.TACO.module.transition(z+u_quantized)
             next_obs = self.aug(next_obses[k].float())
             o_embed, y_next = self.TACO.module.encode(next_obs, ema=True)
-            y_pred = self.TACO.module.predictor(self.TACO.module.proj_s(z)) 
-            spr_loss += utils.spr_loss(y_pred, y_next)
+            #y_pred = self.TACO.module.predictor(self.TACO.module.proj_s(z)) 
+            #spr_loss += utils.spr_loss(y_pred, y_next)
+            spr_loss += F.l1_loss(o_embed, z)
         
         self.taco_opt.zero_grad()
         (spr_loss + meta_policy_loss + decoder_loss + quantize_loss).backward()
@@ -272,10 +273,11 @@ class TACORepresentation:
         return metrics
     
     def update_metapolicy(self, replay_iter, step, tok_to_code, 
-                          tok_to_idx, idx_distance, cross_entropy=False):
+                          tok_to_idx, idx_to_tok, idx_distance, cross_entropy=False):
+        
         metrics = dict()
         batch = next(replay_iter)
-        obs, action, tok, _, _, _, _ = batch
+        obs, action, tok, _, _ = batch
         obs = torch.torch.as_tensor(obs, device=self.device)
         action = torch.torch.as_tensor(action, device=self.device)
         tok = torch.torch.as_tensor(tok, device=self.device).reshape(-1)
@@ -283,19 +285,55 @@ class TACORepresentation:
         with torch.no_grad():
             u = self.TACO.module.action_encoder(z, action)
             _, u_quantized, _, _, min_encoding_indices = self.TACO.module.a_quantizer(u)
-            code  = [tok_to_code(x) for x in tok]
+            code  = [tok_to_code(x)[0] for x in tok]
             index = torch.tensor([tok_to_idx(x) for x in tok]).long().to(self.device)
             u_quantized = self.TACO.module.a_quantizer.embedding.weight[code, :]
         
         meta_action = self.TACO.module.meta_policy(z.detach())
-        if cross_entropy:
-            meta_policy_loss = F.cross_entropy(meta_action, index)
-        else:
-            meta_action = F.softmax(meta_action)
-            meta_policy_loss = torch.mean(torch.sum(meta_action*idx_distance[:, index].T,dim=-1))
+        meta_policy_loss = F.cross_entropy(meta_action, index)
+        
+        ### Iterate over every token and calculate the deecoder l1 loss (of the first action)
+        decoder_loss_lst = []
+        for idx in range(idx_distance.shape[0]):
             
+            with torch.no_grad():
+                learned_code   = self.TACO.module.a_quantizer.embedding.weight
+                u_quantized    = learned_code[tok_to_code(torch.tensor(idx_to_tok[idx]))[0], :]
+            decode_action = self.TACO.module.decoder((z + u_quantized).detach())
+            decoder_loss = torch.sum(torch.abs(decode_action-action), dim=-1, keepdim=True)
+            decoder_loss_lst.append(decoder_loss)
         
+        ### Shape: (Batch_size, num_indices)
+        decoder_loss = torch.cat(decoder_loss_lst, dim=-1)
+        meta_action_dist = F.gumbel_softmax(meta_action)
+        decoder_loss = torch.mean(torch.sum(decoder_loss*meta_action_dist, dim=-1))
         
+        self.taco_opt.zero_grad()
+        (meta_policy_loss+decoder_loss).backward()
+        self.taco_opt.step()
+        
+        metrics['meta_policy_loss'] = meta_policy_loss
+        metrics['decoder_loss'] = decoder_loss
+        
+        return metrics
+    
+    def update_metapolicy_nonbpe(self, replay_iter, step):
+        
+        metrics = dict()
+        batch  = next(replay_iter)
+        obs, action, code, action_seq, obs_lst = batch
+        obs    = torch.torch.as_tensor(obs, device=self.device)
+        action = torch.torch.as_tensor(action, device=self.device)
+        code   = torch.torch.as_tensor(code, device=self.device).reshape(-1)
+        z      = self.encoder(obs.float())
+        with torch.no_grad():
+            u = self.TACO.module.action_encoder(z, action)
+            _, u_quantized, _, _, min_encoding_indices = self.TACO.module.a_quantizer(u)
+            u_quantized = self.TACO.module.a_quantizer.embedding.weight[code, :]
+        
+        meta_action = self.TACO.module.meta_policy(z.detach())
+        meta_policy_loss = F.cross_entropy(meta_action, code)
+    
         decode_action = self.TACO.module.decoder((z + u_quantized).detach())
         decoder_loss = F.l1_loss(decode_action, action)
         
@@ -307,7 +345,7 @@ class TACORepresentation:
         metrics['decoder_loss'] = decoder_loss
         
         return metrics
-
+    
     ### train bc
     def update_bc(self, replay_iter, step):
         metrics = dict()

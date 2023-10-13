@@ -251,9 +251,8 @@ class TACORepresentation:
             z = self.TACO.module.transition(z+u_quantized)
             next_obs = self.aug(next_obses[k].float())
             o_embed, y_next = self.TACO.module.encode(next_obs, ema=True)
-            #y_pred = self.TACO.module.predictor(self.TACO.module.proj_s(z)) 
-            #spr_loss += utils.spr_loss(y_pred, y_next)
-            spr_loss += F.l1_loss(o_embed, z)
+            y_pred = self.TACO.module.predictor(self.TACO.module.proj_s(z)) 
+            spr_loss += utils.spr_loss(y_pred, y_next)
         
         self.taco_opt.zero_grad()
         (spr_loss + meta_policy_loss + decoder_loss + quantize_loss).backward()
@@ -325,7 +324,7 @@ class TACORepresentation:
         obs    = torch.torch.as_tensor(obs, device=self.device)
         action = torch.torch.as_tensor(action, device=self.device)
         code   = torch.torch.as_tensor(code, device=self.device).reshape(-1)
-        z      = self.encoder(self.aug(obs.float()))
+        z      = self.encoder(obs.float())
         with torch.no_grad():
             u = self.TACO.module.action_encoder(z, action)
             _, u_quantized, _, _, min_encoding_indices = self.TACO.module.a_quantizer(u)

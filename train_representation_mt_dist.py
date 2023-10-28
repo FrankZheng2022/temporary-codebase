@@ -89,7 +89,8 @@ class Workspace:
 
         self.pretraining_data_dirs = []
         if self.cfg.stage < 3:
-            for task_name in self.cfg.task_names:
+            #for task_name in self.cfg.task_names:
+            for task_name in utils.task_names(self.cfg.split):
                 offline_data_dir = construct_task_data_path(self.cfg.data_storage_dir, task_name, self.cfg.task_data_dir_suffix)
                 self.pretraining_data_dirs.append(offline_data_dir)
         else:
@@ -317,6 +318,8 @@ class Workspace:
     
 
     def train_metapolicy(self):
+        self.agent.n_code = self.cfg.n_code
+        self.agent.alpha  = self.cfg.alpha
         metrics = None
         vocab_dir = self.results_dir / 'vocab'
         with open(vocab_dir / 'vocab_mt45_code{}_vocab{}_minfreq{}_maxtoken{}.pkl'.format(self.cfg.n_code, self.cfg.vocab_size, self.cfg.min_frequency, self.cfg.max_token_length), 'rb') as f:

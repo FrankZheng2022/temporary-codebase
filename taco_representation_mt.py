@@ -175,7 +175,7 @@ class TACO(nn.Module):
 
 class TACORepresentation:
     def __init__(self, obs_shape, action_dim, device, lr, feature_dim,
-                 hidden_dim, nstep, spr, trunk, pcgrad, n_code, vocab_size, obs_dependent):
+                 hidden_dim, nstep, spr, trunk, pcgrad, n_code, vocab_size, obs_dependent, alpha):
         self.device = device
         self.nstep = nstep
         self.spr = spr # TODO: remove it? It seems unused...
@@ -183,6 +183,7 @@ class TACORepresentation:
         self.scaler = GradScaler()
         self.feature_dim = feature_dim
         self.n_code = n_code
+        self.alpha  = alpha
         self.encoder = Encoder(obs_shape, feature_dim, 
                                 trunk=trunk).to(device)
         
@@ -272,13 +273,19 @@ class TACORepresentation:
         return metrics
     
     def update_metapolicy(self, replay_iter, step, tok_to_code, 
-                          tok_to_idx, idx_to_tok, idx_distance, cross_entropy=False):
+                          tok_to_idx, idx_to_tok, idx_distance, 
+                          cross_entropy=False):
         
         metrics = dict()
         batch = next(replay_iter)
-        obs, action, tok, _, _ = batch
+        obs, action, tok, action_seq, obs_seq = batch
         obs = torch.torch.as_tensor(obs, device=self.device)
         action = torch.torch.as_tensor(action, device=self.device)
+        action_seq = [torch.torch.as_tensor(action, device=self.device) for action in action_seq]
+        obs_seq = [torch.torch.as_tensor(o, device=self.device) for o in obs_seq]
+        obs_seq = [obs] + obs_seq[:-1]
+        z_seq   = [self.encoder(o.float()) for o in obs_seq]
+        
         tok = torch.torch.as_tensor(tok, device=self.device).reshape(-1)
         z = self.encoder(obs.float())
         with torch.no_grad():
@@ -293,22 +300,38 @@ class TACORepresentation:
         
         ### Iterate over every token and calculate the deecoder l1 loss (of the first action)
         decoder_loss_lst = []
+        
         for idx in range(idx_distance.shape[0]):
             
-            with torch.no_grad():
-                learned_code   = self.TACO.module.a_quantizer.embedding.weight
-                u_quantized    = learned_code[tok_to_code(torch.tensor(idx_to_tok[idx]))[0], :]
+            token_length   = len(tok_to_code(torch.tensor(idx_to_tok[idx])))
+            rollout_length = min(len(action_seq), token_length)
+            action = torch.concatenate(action_seq[:rollout_length], dim=0)
+            z = torch.concatenate(z_seq[:rollout_length], dim=0)
+            
+            ### Concatenate the codes from step 1 to #rollout_length
+            u_quantized_lst = []
+            for t in range(rollout_length):
+                with torch.no_grad():
+                    learned_code   = self.TACO.module.a_quantizer.embedding.weight
+                    u_quantized    = learned_code[tok_to_code(torch.tensor(idx_to_tok[idx]))[t], :]
+                    u_quantized    = u_quantized.repeat(obs.shape[0], 1)
+                u_quantized_lst.append(u_quantized)
+            u_quantized = torch.concatenate(u_quantized_lst,dim=0)
+            
+            ### Decode the codes into action sequences and calculate L1 loss
             decode_action = self.TACO.module.decoder((z + u_quantized).detach())
             decoder_loss = torch.sum(torch.abs(decode_action-action), dim=-1, keepdim=True)
+            decoder_loss = torch.sum(decoder_loss.reshape(rollout_length, obs.shape[0]),dim=0).unsqueeze(-1)
             decoder_loss_lst.append(decoder_loss)
         
         ### Shape: (Batch_size, num_indices)
         decoder_loss = torch.cat(decoder_loss_lst, dim=-1)
         meta_action_dist = F.gumbel_softmax(meta_action)
+        #meta_action_dist = F.softmax(meta_action)
         decoder_loss = torch.mean(torch.sum(decoder_loss*meta_action_dist, dim=-1))
         
         self.taco_opt.zero_grad()
-        (meta_policy_loss+decoder_loss).backward()
+        (meta_policy_loss+self.alpha*decoder_loss).backward()
         self.taco_opt.step()
         
         metrics['meta_policy_loss'] = meta_policy_loss

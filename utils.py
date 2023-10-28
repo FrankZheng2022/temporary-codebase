@@ -17,6 +17,18 @@ from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 import io
 
+def task_names(split=1):
+    if split == 1:
+        task_names = ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
+    elif split == 2:
+        ###  ['pick-place-wall', 'reach-wall', 'button-press', 'coffee-button', 'button-press-topdown']
+        task_names = ['assembly', 'basketball', 'button-press-topdown-wall', 'button-press-wall', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close', 'hand-insert', 'door-unlock', 'door-lock', 'box-close', 'bin-picking']
+    elif split == 4:
+        ### ['drawer-open', 'pick-place', 'button-press-wall', 'assembly', 'door-open']
+        task_names = ['basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'drawer-close', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close', 'hand-insert', 'door-unlock', 'door-lock', 'box-close', 'bin-picking']
+        
+    return task_names
+
 ### code_pred: code sequence predicted by the meta-policy
 ### code_target: target code sequence provided by the tokenizer
 ### code_dist: pre-computed distance matrix between codes

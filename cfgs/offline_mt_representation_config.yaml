@@ -12,8 +12,10 @@ tokenized_data_dir: tmp/tokenized
 log_root_dir: exp_local
 # task_names: ['peg-unplug-side', 'hammer', 'pick-place', 'assembly', 'reach', 'push', 'pick-place-wall', 'pick-out-of-hole', 'stick-push'] # for testing mt-19
 task_names: ['assembly', 'basketball', 'button-press-topdown', 'button-press-topdown-wall', 'button-press', 'button-press-wall', 'coffee-button', 'coffee-pull', 'coffee-push', 'dial-turn', 'disassemble', 'door-close', 'door-open', 'drawer-close', 'drawer-open', 'faucet-open', 'faucet-close', 'hammer', 'handle-press-side', 'handle-press', 'handle-pull-side', 'handle-pull', 'lever-pull', 'peg-insert-side', 'pick-place-wall', 'pick-out-of-hole', 'reach', 'push-back', 'push', 'pick-place', 'plate-slide', 'plate-slide-side', 'plate-slide-back', 'plate-slide-back-side', 'peg-unplug-side', 'soccer', 'stick-push', 'stick-pull', 'push-wall', 'reach-wall', 'shelf-place', 'sweep-into', 'sweep', 'window-open', 'window-close']
+split: 1
 max_traj_per_task: 100
 
+alpha: 3
 load_snapshot: true
 stage: 1
 pcgrad: false
@@ -32,7 +34,6 @@ non_bpe: false
 exp_bc_name: default
 cross_entropy: false
 bc: false
-taco: true
 num_train_steps: 100100
 trunk: true
 # task settings
@@ -44,8 +45,8 @@ save_snapshot: true
 # replay buffer
 replay_buffer_size: 100000000
 replay_buffer_num_workers: 4
-nstep: 3
-batch_size: 256
+nstep: 3 ### set nstep=5 during stage 3
+batch_size: 128
 # misc
 seed: 1
 device: cuda
@@ -76,6 +77,7 @@ agent:
   vocab_size: ${vocab_size}
   nstep: ${nstep}
   obs_dependent: ${obs_dependent}
+  alpha: ${alpha}
 
 
 hydra:

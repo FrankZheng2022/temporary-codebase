@@ -55,7 +55,7 @@ setup_cmds:   # This starts from the `dilbert` directory.
 hps_dict:
   stage_3_lr: [1e-4]
   stage_3_batch_size: [128]
-  stage_3_downstream_task_name: [door-lock,door-unlock,hand-insert,bin-picking,box-close]
+  stage_3_downstream_task_name: ['peg-insert-side', 'disassemble', 'plate-slide', 'coffee-push', 'plate-slide-back']
   stage_3_max_traj_per_task: [5]
   vocab_size: [200]
   min_frequency: [100]
@@ -75,7 +75,7 @@ config:
   data_storage_dir: $datastore/taa_data/
   task_data_dir_suffix: null
   # NOTE: set this dir to the path to the location of the snapshot that should be finetuned.
-  results_dir: $datastore/taa_results/split_1/02.47.20--10-09-2023/
+  results_dir: $datastore/taa_results/split_5/02.56.12--10-10-2023/
   exp_name: taa
   n_code: 10
   nstep: 3

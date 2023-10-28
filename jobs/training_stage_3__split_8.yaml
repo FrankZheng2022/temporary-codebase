@@ -1,0 +1,113 @@
+# An example of running a commandline-based job by yaml.
+
+# To set up a job, the user needs to specify `cmd` and `hp_dict`. Optionally,
+# the user can provide additional
+# arguments`rl_nexus.hp_tuning_tools.submit_xt_job.submit_xt_job` takes. To run
+# the job, go to the `rl_nexus` directory and then run `python
+# hp_tuning_tools/submit_xt_job.py <job_yaml_file>`.
+
+
+### Code setup
+# The commandline to execute. At run time, the hyperparameter will be passed as
+# extra options to `cmd`. For example, if there is a hyperparameter named X with
+# value 1.0. Then the full commandline executed in `code_dir` is `$cmd --X 1.0`.
+# If `cmd` saves results, for syncing, please save them to
+# the `results` directory in dilbert. (like the example below).
+cmd: python -W ignore train_pipeline.py
+arg_template: '{}={}'
+
+
+# (optional) A directory or a list of directories to upload
+code_paths:  # A path AAA/BBB/CCC will be uploaded as rl_nexus/CCC
+   - /mnt/d/code/temporary-codebase
+
+#(optional) This should be a relative path wrt rl_nexus for running commands during job execution. If not provided, it
+# uses the first directory in code_paths by default. Otherwise, it uses rl_nexus.
+code_dir: temporary-codebase  # TODO: change this when the codebase is ready.
+
+
+# (optional) Commandlines to set up the code.
+setup_cmds:   # This starts from the `dilbert` directory.
+
+  ################ install mujoco210
+  - sudo apt-get install -y libglew-dev patchelf libosmesa6-dev
+  - wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
+  - tar -xf mujoco210-linux-x86_64.tar.gz
+  - rm mujoco210-linux-x86_64.tar.gz
+  - mkdir ~/.mujoco
+  - mv mujoco210 ~/.mujoco
+  - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin:/usr/lib/nvidia
+  ################
+  - cd rl_nexus/
+  # install cgo
+  #- git clone https://$GITHUB_TOKEN@github.com/FrankZheng2022/temporary-codebase
+  # This is for the case when it's uploaded from the local machine
+  - cd temporary-codebase
+  # - . install.sh
+  - pip install -r requirements_210.txt
+  - pip install git+https://$GITHUB_TOKEN:x-oauth-basic@github.com/microsoft/dexter-benchmarks-metaworld.git@ruijie#egg=metaworld
+  - pip freeze
+  - cd .. # back to rl_nexus
+  - cd .. # back to dilbert
+
+### Hyperparameter setting
+# A dict that specifies the values of hyperparameters to search over.
+hps_dict:
+  stage_3_lr: [1e-4]
+  stage_3_batch_size: [128]
+  stage_3_downstream_task_name: ['reach', 'plate-slide-side', 'soccer', 'handle-press', 'stick-pull']
+  stage_3_max_traj_per_task: [5]
+  vocab_size: [200]
+  min_frequency: [100]
+  max_token_length: [20]
+  seed: [1,2,3]
+
+# (optional) A dict that specifies the default values of hyperparameters. This
+# is meant to overwrite the default hyperparameter used in the method.
+# Therefore, this is optional, and keys here do not necessary have to appear in
+# `hps_dict` (vice versa)
+config:
+  # seed: randint  # keys here do not need to appear in hps_dict
+  # 'randint' is a reserved phrase, which would generate random seeds at runtime.
+  starting_stage: 3
+  final_stage: 3
+  log_root_dir: ../results  # for mirroring the results
+  data_storage_dir: $datastore/taa_data/
+  task_data_dir_suffix: null
+  # NOTE: set this dir to the path to the location of the snapshot that should be finetuned.
+  results_dir: $datastore/taa_results/split_8/02.54.50--10-10-2023/
+  exp_name: taa
+  n_code: 10
+  nstep: 3
+  obs_dependent: true
+  base_port: 12235
+  vocab_size: 200
+  min_frequency: 5
+  max_token_length: 20
+  num_eval_episodes: 30
+  stage_3_num_train_steps: 10100
+  stage_3_eval_freq: 5000
+  stage_3_save_snapshot: false
+
+
+n_seeds_per_hp: 1  # (optional) Number of seeds to run per hyperparameter.
+
+### (optional) Compute resources
+
+# compute_target: azb-westus2
+# vm_size: Standard_NC4as_T4_v3
+
+# NOTE: 1-GPU VMs are enough for finetuning.
+# compute_target: sing-msrresrchvc-V100
+compute_target: sing-msrresrchvc-P100
+# compute_target: sing-msrresrchvc-P40
+# compute_target: sing-msrrlvc-T4 # Name of the compute resource.
+
+docker_image: nexus-gpu # Name of the Docker image.
+max_n_nodes: 100 # Maximal number of nodes to launch in the job.
+# max_total_runs: 3000 # Maximal number of runs in the job.
+# n_sequential_runs_per_node: 1  # Number of sequential runs per node.
+# n_concurrent_runs_per_node: 1  # Number of concurrent runs per node.
+# low_priority: False  # Whether the job can is preemptible.
+# hold: False # whether the nodes should be released automatically (hold=False) after the job completes.
+remote_run: True  # Set False to debug locally.

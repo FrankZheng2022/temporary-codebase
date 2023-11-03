@@ -337,7 +337,7 @@ class Workspace:
                 obs = torch.from_numpy(obs).to(self.device)
                 action = torch.from_numpy(action).to(self.device)
                 z = self.agent.encoder(obs.float())
-                code_distance = self.agent.cal_distance(z)
+                code_distance = self.agent.cal_distance(z.detach())
                 code_distance_lst.append(code_distance[None, :])
                 u = self.agent.TACO.module.action_encoder(z, action)
                 _, _, _, _, min_encoding_indices = self.agent.TACO.module.a_quantizer(u)
@@ -361,6 +361,11 @@ class Workspace:
                 code_seq_j = self.tokenizer.decode([self.idx_to_tok[j]], verbose=False)
                 idx_distance[i][j] = utils.cal_tok_dist(code_seq_i, code_seq_j, code_distance)
         idx_distance = idx_distance.to(self.device)
+        # ### Calculate distance_metric
+        # idx_distance = torch.zeros(len(self.idx_to_tok), len(self.idx_to_tok)).to(self.device)
+        # for i in range(len(self.idx_to_tok)):
+        #     for j in range(len(self.idx_to_tok)):
+        #         idx_distance[i][j] = tok_distance[self.idx_to_tok[i]-1][self.idx_to_tok[j]-1]
         
         print(f"========= Initiaizing the model... ==========")
         self.agent.train(False)

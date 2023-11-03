@@ -275,7 +275,6 @@ class TACORepresentation:
     def update_metapolicy(self, replay_iter, step, tok_to_code, 
                           tok_to_idx, idx_to_tok, idx_distance, 
                           cross_entropy=False):
-        
         metrics = dict()
         batch = next(replay_iter)
         obs, action, tok, action_seq, obs_seq = batch
@@ -296,7 +295,14 @@ class TACORepresentation:
             u_quantized = self.TACO.module.a_quantizer.embedding.weight[code, :]
         
         meta_action = self.TACO.module.meta_policy(z.detach())
-        meta_policy_loss = F.cross_entropy(meta_action, index)
+        if cross_entropy:
+            meta_policy_loss = F.cross_entropy(meta_action, index)
+        else:
+            #idx_distance = torch.ones_like(idx_distance).to(self.device)-torch.eye(idx_distance.shape[0]).to(self.device)
+            meta_action_dist = F.gumbel_softmax(meta_action)
+            tok_distance = idx_distance[index] ### distance to the target index
+            meta_policy_loss = torch.mean(torch.sum(meta_action_dist*tok_distance, dim=-1))
+            
         
         ### Iterate over every token and calculate the deecoder l1 loss (of the first action)
         decoder_loss_lst = []

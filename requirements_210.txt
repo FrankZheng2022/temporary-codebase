@@ -3,9 +3,6 @@ lockfile
 patchelf
 glfw
 cython==0.29.36
-torch==2.0.1
-torchvision==0.15.2
-torchaudio==2.0.2
 termcolor==1.1.0
 tb-nightly
 imageio==2.9.0
@@ -22,6 +19,5 @@ matplotlib==3.4.2
 opencv-python==4.5.3.56
 scikit-image
 dm_control
-gym==0.22.0
 chardet
 tokenizers

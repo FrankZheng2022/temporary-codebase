@@ -24,7 +24,7 @@ n_code: 200
 vocab_size: 200
 eval: true
 num_envs: 20
-num_eval_episodes: 20
+num_eval_episodes: 40
 eval_max_steps: 600
 eval_freq: 5000
 port: 12235
@@ -50,6 +50,7 @@ save_snapshot: true
 replay_buffer_size: 100000000
 replay_buffer_num_workers: 4
 nstep: 3 ### set nstep=5 during stage 3
+nstep_history: 10
 batch_size: 128
 # misc
 seed: 1
@@ -62,10 +63,12 @@ lr: 1e-4
 feature_dim: 100
 hidden_dim: 1024
 exp_name: default
-target: taco_representation_mt.TACORepresentation
+target: taco_representation_mt_transformer.TACORepresentation
 action_dim: 7
 img_res: [128, 128]
-decoder_type: deterministic
+decoder_type: gmm
+positional_embedding: absolute
+
 agent:
   _target_: ${target}
   obs_shape: ??? # to be specified later
@@ -79,9 +82,11 @@ agent:
   n_code: ${n_code}
   vocab_size: ${vocab_size}
   nstep: ${nstep}
+  nstep_history: ${nstep_history}
   obs_dependent: ${obs_dependent}
   alpha: ${alpha}
   decoder_type: ${decoder_type}
+  positional_embedding: ${positional_embedding}
 
 
 hydra:

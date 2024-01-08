@@ -7,7 +7,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 import os
 os.environ['MKL_SERVICE_FORCE_INTEL'] = '1'
-#os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'egl'
 
 from pathlib import Path
 
@@ -18,12 +18,11 @@ import time
 import torch
 import torch.nn as nn
 import random
-from libero_utils import convert_obs, get_task_embedding
+import libero_wrapper
 from libero.libero import benchmark
-from libero.libero.envs import OffScreenRenderEnv, SubprocVectorEnv
 import utils
 from logger_offline import Logger
-from replay_buffer import make_replay_loader_dist
+from replay_buffer_transformer import make_replay_loader_dist
 from video import TrainVideoRecorder, VideoRecorder
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
@@ -31,7 +30,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.nn.functional as F
 from torch.distributed import init_process_group, destroy_process_group, gather
 #from bpe import compute_pair_freqs, merge_pair, tokenize
-from collections import defaultdict
+from collections import defaultdict, deque
 import copy
 import pickle
 import io
@@ -103,22 +102,11 @@ class Workspace:
             task_suite = benchmark_dict[self.cfg.downstream_task_suite]()
             task = task_suite.get_task(int(self.cfg.downstream_task_name))
             task_name = task.name
-            task_description = task.language
-            task_bddl_file = os.path.join("/fs/cml-projects/taco_rl/LIBERO/libero/libero/bddl_files", task.problem_folder, task.bddl_file)
-
-            # step over the environment
-            env_args = {
-                "bddl_file_name": task_bddl_file,
-                "camera_heights": 128,
-                "camera_widths": 128,
-                "render_gpu_device_id":-1
-            }
-            env_num = self.cfg.num_eval_episodes
-            self.eval_env = SubprocVectorEnv(
-                [lambda: OffScreenRenderEnv(**env_args) for _ in range(env_num)]
-            )
-            self.eval_env.task_embedding = get_task_embedding(task_description).to(self.device)
+            self.eval_env = libero_wrapper.make(self.cfg.downstream_task_name, 
+                                                self.cfg.downstream_task_suite, seed=self.cfg.seed, 
+                                                frame_stack=self.cfg.frame_stack)
             self.eval_env.task_name = task_name
+            self.eval_env.task_embedding = libero_wrapper.get_task_embedding(task.language)
 
         #### Don't need to load the data in the second stage (calculating BPE)
         assert self.cfg.stage in [1, 2, 3], "Stage must be 1, 2, or 3."
@@ -149,7 +137,8 @@ class Workspace:
             self.replay_loader = make_replay_loader_dist(
                 self.pretraining_data_dirs, self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
                 self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size)
+                True, self.cfg.nstep, self.cfg.nstep_history, 
+                self.cfg.discount, self.rank, self.world_size)
         elif self.cfg.stage == 3:
             downstream_data_path = construct_task_data_path(self.cfg.data_storage_dir, self.eval_env.task_name, self.cfg.task_data_dir_suffix)
             print(f"Loading target task data from {downstream_data_path}")
@@ -157,12 +146,14 @@ class Workspace:
                 self.replay_loader = make_replay_loader_dist(
                     [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
                     self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size)
+                    True, self.cfg.nstep, self.cfg.nstep_history, 
+                    self.cfg.discount, self.rank, self.world_size)
             else:
                 self.replay_loader = make_replay_loader_dist(
                     [downstream_data_path], self.cfg.max_traj_per_task, self.cfg.replay_buffer_size,
                     self.cfg.batch_size//self.world_size, self.cfg.replay_buffer_num_workers,
-                    True, self.cfg.nstep, self.cfg.discount, self.rank, self.world_size,
+                    True, self.cfg.nstep, self.cfg.nstep_history, 
+                    self.cfg.discount, self.rank, self.world_size,
                     n_code=self.cfg.n_code, vocab_size=self.cfg.vocab_size,
                     min_frequency=self.cfg.min_frequency, max_token_length=self.cfg.max_token_length)
         else:
@@ -187,22 +178,48 @@ class Workspace:
             self._replay_iter= iter(self.replay_loader)
         return self._replay_iter
 
-    def act(self, env, obs, code_buffer):
+    def act(self, env, obs, code_buffer, z_history_buffer):
+        
+        obs_agent = obs.agentview
+        obs_wrist = obs.wristview
+        state     = obs.state 
         task_embedding = env.task_embedding
-        obs_agent, obs_wrist, state = obs
-        task_embedding = task_embedding.repeat(self.cfg.num_eval_episodes, 1)
+        
+        task_embedding = torch.torch.as_tensor(task_embedding, device=self.device)
+        obs_agent = torch.torch.as_tensor(obs_agent, device=self.device).unsqueeze(0)
+        obs_wrist = torch.torch.as_tensor(obs_wrist, device=self.device).unsqueeze(0)
+        state     = torch.torch.as_tensor(state, device=self.device).unsqueeze(0)
+
         z = self.agent.encode_obs(obs_agent, obs_wrist, state, task_embedding)
+        z_history_buffer.append(z.unsqueeze(1)) ### (1,1,feature_dim*4)
+        z_history = torch.concatenate(list(z_history_buffer), dim=1) ### (1,timestep,feature_dim*4)
+        timestep  = len(z_history_buffer)
+        
+        if timestep < self.cfg.nstep_history:
+            pad_step = self.cfg.nstep_history - timestep
+            pad_mask = torch.torch.as_tensor([False]*len(z_history_buffer) + [True] * pad_step,
+                                             device=self.device).unsqueeze(0)
+            pad = torch.zeros(1,pad_step, z_history.shape[-1]).to(self.device)
+            z_history = torch.concatenate([z_history, pad], dim=1)
+        else:
+            pad_mask = None
+        
+        positional_embedding = self.agent.positional_embedding(z_history)
+        z_history += positional_embedding.to(self.device)
+        mask = nn.Transformer.generate_square_subsequent_mask(self.cfg.nstep_history).to(self.device)
+        z_history = self.agent.TACO.module.transformer_embedding(z_history, mask=mask, src_key_padding_mask=pad_mask)
+        z_history = z_history[:,timestep-1, :]
         
         ### For Vanilla BC, use decoder to directly predict the raw action
         if self.cfg.bc:
             if self.cfg.decoder_type == 'deterministic':
-                action = self.agent.TACO.module.decoder(z)
+                action = self.agent.TACO.module.decoder(z_history)
             elif self.cfg.decoder_type == 'gmm':
-                action = self.agent.TACO.module.decoder(z).sample()
+                action = self.agent.TACO.module.decoder(z_history).sample()
             else:
                 print('Decoder type not supported!')
                 raise Exception
-            return [], action.detach().cpu().numpy()
+            return [], action.detach().cpu().numpy()[0]
         if self.cfg.non_bpe:
             action_code = self.agent.TACO.module.meta_policy(z).max(-1)[1]
             learned_code  = self.agent.TACO.module.a_quantizer.embedding.weight
@@ -228,29 +245,33 @@ class Workspace:
 
     def eval_st(self):
         #print('=====================Begin Evaluation=====================')
+        self.agent.train(False)
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
 
-        dones = [False]*self.cfg.num_eval_episodes
-        step, code_buffer = 0, []
-        states = self.eval_env.reset()
-        while step < self.cfg.eval_max_steps:
-            with torch.no_grad():
-                obs = convert_obs(states, self.device)
-                code_buffer, actions = self.act(self.eval_env, obs, code_buffer)
-            states, _, done, _ = self.eval_env.step(actions)
-            for i in range(self.cfg.num_eval_episodes):
-                dones[i] = dones[i] or done[i]
-            step += 1
-            if all(dones):
-                break
+        eval_env, task_name = self.eval_env, self.cfg.downstream_task_name
+        counter, episode, success = 0, 0, 0
+        while eval_until_episode(episode):
+            time_step = eval_env.reset()
+            step, code_buffer = 0, []
+            z_history_buffer = deque(maxlen=self.cfg.nstep_history)
+            while step < self.cfg.eval_max_steps:
+                if time_step['done']:
+                    success += 1
+                    break
+                with torch.no_grad():
+                    code_buffer, action = self.act(eval_env, time_step, code_buffer, z_history_buffer)
+                time_step = eval_env.step(action)
+                step += 1
+            episode += 1
 
-        print('Success Rate:{}'.format(np.sum(dones)/self.cfg.num_eval_episodes*100))
-        self.performance.append(np.sum(dones)/self.cfg.num_eval_episodes*100)
+        print('Success Rate:{}'.format(success/self.cfg.num_eval_episodes*100))
+        self.performance.append(success/self.cfg.num_eval_episodes*100)
         if self.rank == 0:
             with open(self.eval_dir / '{}.pkl'.format(self.cfg.exp_bc_name), 'wb') as f:
                 pickle.dump(self.performance, f)
             #print('=======================End Evaluation=======================')
-
+        self.agent.train(True)
+        
     def pretrain_models(self):
         metrics = None
         start_train_block_time = time.time()
@@ -484,7 +505,6 @@ class Workspace:
     def train_bc(self):
         metrics = None
         start_train_block_time = time.time()
-        self.eval_st()
         while self.global_step < self.cfg.num_train_steps:
             if self.global_step%self.cfg.eval_freq == 0 and self.rank == 0:
             #if self.global_step%100 == 0 and self.rank == 0:
@@ -552,11 +572,11 @@ class Workspace:
 RANK = None
 WORLD_SIZE = None
 
-@hydra.main(config_path='cfgs', config_name='offline_mt_representation_config')
+@hydra.main(config_path='cfgs', config_name='offline_mt_representation_transformer_config')
 def main(cfg):
     global RANK, WORLD_SIZE
     ddp_setup(RANK, WORLD_SIZE, cfg.port)
-    from train_representation_mt_dist import Workspace as W
+    from train_representation_mt_dist_transformer import Workspace as W
     root_dir = Path.cwd()
     workspace = W(cfg, RANK, WORLD_SIZE)
     root_dir = Path.cwd()

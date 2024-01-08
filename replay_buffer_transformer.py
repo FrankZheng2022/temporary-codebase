@@ -38,7 +38,7 @@ def load_episode(fn):
 
 class ReplayBuffer(IterableDataset):
     def __init__(self, replay_dir, max_traj_per_task, max_size, num_workers, nstep,
-                 discount, fetch_every, save_snapshot,
+                 nstep_history, discount, fetch_every, save_snapshot,
                  rank=None, world_size=None,
                  n_code=None, vocab_size=None,
                  min_frequency=None, max_token_length=None):
@@ -50,6 +50,7 @@ class ReplayBuffer(IterableDataset):
         self._episode_fns = []
         self._episodes = dict()
         self._nstep = nstep
+        self._nstep_history = nstep_history
         self._discount = discount
         self._fetch_every = fetch_every
         self._samples_since_last_fetch = fetch_every
@@ -126,11 +127,37 @@ class ReplayBuffer(IterableDataset):
                    episode['observation_wrist'][idx + i],
                    episode['state'][idx + i])
             next_obs_lst.append(obs)
+            
+            
+        obs_agent_history, obs_wrist_history, state_history, task_embedding_history = [], [], [], []
+        timestep = idx - 1
+        
+        ### (o_{t-3}, o_{t-2}, o_{t-1}, o_{t}, 0, 0 ...)
+        while timestep >= 0 and len(obs_agent_history)<self._nstep_history:
+            obs_agent_history = [episode['observation'][timestep][None,:]] + obs_agent_history
+            obs_wrist_history = [episode['observation_wrist'][timestep][None,:]] + obs_wrist_history
+            state_history     = [episode['state'][timestep][None, :]] + state_history 
+            task_embedding_history = [episode['task_embedding'][None, :]] + task_embedding_history
+            timestep -= 1
+        pad_idx = len(obs_agent_history) - 1
+        pad_mask = np.array([False]*(pad_idx+1)+[True]*(self._nstep_history-pad_idx-1))
+        
+        for i in range(len(obs_agent_history), self._nstep_history):
+            obs_agent_history.append(np.zeros_like(episode['observation'][0][None, :]))
+            obs_wrist_history.append(np.zeros_like(episode['observation_wrist'][0][None, :]))
+            state_history.append(np.zeros_like(episode['state'][0][None, :]))
+            task_embedding_history.append(np.zeros_like(episode['task_embedding'][None, :]))
+        obs_agent_history = np.vstack(obs_agent_history)
+        obs_wrist_history = np.vstack(obs_wrist_history)
+        state_history = np.vstack(state_history)
+        task_embedding_history = np.vstack(task_embedding_history)                                
+        obs_history = (obs_agent_history, obs_wrist_history, state_history, task_embedding_history)
+                                 
         if self.vocab_size is not None:
             tok = episode['token'][idx]
-            return (task_embedding, obs_agent, obs_wrist, state, action, tok, action_seq, next_obs_lst)
+            return (task_embedding, obs_agent, obs_wrist, state, action, tok, action_seq, next_obs_lst, obs_history, pad_idx, pad_mask)
         else:
-            return (task_embedding, obs_agent, obs_wrist, state, action, action_seq, next_obs_lst)
+            return (task_embedding, obs_agent, obs_wrist, state, action, action_seq, next_obs_lst, obs_history, pad_idx, pad_mask)
 
     def __iter__(self):
         while True:
@@ -144,7 +171,7 @@ def _worker_init_fn(worker_id):
 
 
 def make_replay_loader_dist(replay_dir, max_traj_per_task, max_size, batch_size, num_workers,
-                       save_snapshot, nstep, discount, rank, world_size,
+                       save_snapshot, nstep, nstep_history, discount, rank, world_size,
                         n_code=None, vocab_size=None, min_frequency=None,
                         max_token_length=None):
     max_size_per_worker = max_size // max(1, num_workers)
@@ -154,6 +181,7 @@ def make_replay_loader_dist(replay_dir, max_traj_per_task, max_size, batch_size,
                             max_size_per_worker,
                             num_workers,
                             nstep,
+                            nstep_history,
                             discount,
                             fetch_every=1000,
                             save_snapshot=save_snapshot,

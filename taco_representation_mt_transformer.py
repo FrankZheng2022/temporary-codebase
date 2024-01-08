@@ -16,6 +16,52 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from resnet18_encoder import ResnetEncoder
 from policy_head import GMMHead
 
+
+class SinusoidalPositionEncoding(nn.Module):
+    def __init__(self, input_size, inv_freq_factor=10, factor_ratio=None):
+        super().__init__()
+        self.input_size = input_size
+        self.inv_freq_factor = inv_freq_factor
+        channels = self.input_size
+        channels = int(np.ceil(channels / 2) * 2)
+
+        inv_freq = 1.0 / (
+            self.inv_freq_factor ** (torch.arange(0, channels, 2).float() / channels)
+        )
+        self.channels = channels
+        self.register_buffer("inv_freq", inv_freq)
+
+        if factor_ratio is None:
+            self.factor = 1.0
+        else:
+            factor = nn.Parameter(torch.ones(1) * factor_ratio)
+            self.register_parameter("factor", factor)
+
+    def forward(self, x):
+        pos_x = torch.arange(x.shape[1], device=x.device).type(self.inv_freq.type())
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1)
+        return emb_x * self.factor
+
+    def output_shape(self, input_shape):
+        return input_shape
+
+    def output_size(self, input_size):
+        return input_size
+    
+    
+class RelativePositionalEncoder(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, n_embd, 2.0) / n_embd))  # [NS/2]
+        self.register_buffer("inv_freq", inv_freq)
+
+    def forward(self, x):
+        pos_seq = torch.arange(x.shape[1] - 1, -1, -1.0, device=x.device)
+        sinusoid_inp = torch.ger(pos_seq, self.inv_freq)  # [N, NS/2] <- outer product
+        pos_enc = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)  # [N, NS]
+        return pos_enc
+
 class RandomShiftsAug(nn.Module):
     def __init__(self, pad):
         super().__init__()
@@ -76,14 +122,14 @@ class ActionEncoder(nn.Module):
             return self.sa_embedding(z.detach()+u)
         else:
             return u
-    
+
 
 class TACO(nn.Module):
     """
     Constrastive loss
     """
 
-    def __init__(self, feature_dim, action_dim, hidden_dim, encoder, nstep, n_code, vocab_size, device, obs_dependent, decoder_type):
+    def __init__(self, feature_dim, action_dim, hidden_dim, encoder, nstep, nstep_history, n_code, vocab_size, device, obs_dependent, decoder_type):
         super(TACO, self).__init__()
 
         self.nstep = nstep
@@ -122,6 +168,8 @@ class TACO(nn.Module):
             print('Decoder type not supported!')
             raise Exception
         
+        encoder_layer = nn.TransformerEncoderLayer(d_model=feature_dim*4, nhead=4, dim_feedforward=hidden_dim, batch_first=True)
+        self.transformer_embedding  = nn.TransformerEncoder(encoder_layer, num_layers=4)
         
         self.proj_s = nn.Sequential(nn.Linear(feature_dim, feature_dim),
                                     nn.ReLU(),
@@ -143,12 +191,12 @@ class TACO(nn.Module):
             z = self.encoder(x)
             z_out = self.proj_s(z)
         return z,  z_out
-    
+
 
 class TACORepresentation:
     def __init__(self, obs_shape, action_dim, device, lr, feature_dim,
-                 hidden_dim, nstep, trunk, pcgrad, n_code, vocab_size, 
-                 obs_dependent, alpha, decoder_type):
+                 hidden_dim, nstep, nstep_history, trunk, pcgrad, n_code, vocab_size, 
+                 obs_dependent, alpha, decoder_type, positional_embedding):
         self.device = device
         self.nstep = nstep
         self.pcgrad = pcgrad
@@ -157,29 +205,36 @@ class TACORepresentation:
         self.n_code = n_code
         self.alpha  = alpha
         self.decoder_type = decoder_type
+        self.positional_embedding = positional_embedding
         self.encoders = torch.nn.ModuleList([ResnetEncoder(input_shape=obs_shape, output_size=feature_dim).to(device),
                                              ResnetEncoder(input_shape=obs_shape, output_size=feature_dim).to(device),
                                              nn.Sequential(
                                                 nn.Linear(9, hidden_dim),
-                                                nn.ReLU(inplace=True),
+                                                nn.ReLU(),
                                                 nn.Linear(hidden_dim, feature_dim),
                                             ),
                                             nn.Sequential(
                                                 nn.Linear(768, hidden_dim),
-                                                nn.ReLU(inplace=True),
+                                                nn.ReLU(),
                                                 nn.Linear(hidden_dim, feature_dim),
                                             ),
                                             ])
                                     
         
-        self.TACO = DDP(TACO(feature_dim, action_dim, hidden_dim, self.encoders, nstep, n_code, vocab_size, device, obs_dependent, decoder_type).to(device))
+        self.TACO = DDP(TACO(feature_dim, action_dim, hidden_dim, self.encoders, nstep, nstep_history, n_code, vocab_size, device, obs_dependent, decoder_type).to(device))
+        if positional_embedding == 'absolute':
+            self.positional_embedding = SinusoidalPositionEncoding(feature_dim*4)
+        elif positional_embedding == 'relative':
+            self.positional_embedding = RelativePositionalEncoder(feature_dim*4)
+        else:
+            print('Positional Embedding Not Implemented')
         
         self.taco_opt = torch.optim.Adam(self.TACO.parameters(), lr=lr)
         self.cross_entropy_loss = nn.CrossEntropyLoss()
         
         # data augmentation
         self.aug = RandomShiftsAug(pad=6)
-
+        
         self.train()
 
     def train(self, training=True):
@@ -207,9 +262,13 @@ class TACORepresentation:
         return code_distance
             
     
-    def encode_obs(self, obs_agent, obs_wrist, state, task_embedding, add_task_embedding=True):
-        z_agent = self.encoders[0](self.aug(obs_agent.float()), langs=task_embedding)
-        z_wrist = self.encoders[1](self.aug(obs_wrist.float()), langs=task_embedding)
+    def encode_obs(self, obs_agent, obs_wrist, state, task_embedding, add_task_embedding=True, aug=True):
+        if aug:
+            z_agent = self.encoders[0](self.aug(obs_agent.float()), langs=task_embedding)
+            z_wrist = self.encoders[1](self.aug(obs_wrist.float()), langs=task_embedding)
+        else:
+            z_agent = self.encoders[0](obs_agent.float(), langs=task_embedding)
+            z_wrist = self.encoders[1](obs_wrist.float(), langs=task_embedding)
         state   = self.encoders[2](state.float())
         if add_task_embedding:
             task_embedding = self.encoders[3](task_embedding)
@@ -370,17 +429,48 @@ class TACORepresentation:
     def update_bc(self, replay_iter, step):
         metrics = dict()
         batch = next(replay_iter)
-        task_embedding, obs_agent, obs_wrist, state, action, _, _ = batch
+        task_embedding, obs_agent, obs_wrist, state, action, _, _, obs_history, pad_idx, pad_mask = batch
+        pad_idx = torch.torch.as_tensor(pad_idx, device=self.device)  ### integers (batch_size, )
+        pad_mask = torch.torch.as_tensor(pad_mask, device=self.device) ### boolean (batch_size, timestep)
         
-        task_embedding = torch.torch.as_tensor(task_embedding, device=self.device)
-        obs_agent = torch.torch.as_tensor(obs_agent, device=self.device)
-        obs_wrist = torch.torch.as_tensor(obs_wrist, device=self.device)
-        state     = torch.torch.as_tensor(state, device=self.device)
-        action    = torch.torch.as_tensor(action, device=self.device)
         
-        z = self.encode_obs(obs_agent, obs_wrist, state, task_embedding)
-        decode_action = self.TACO.module.decoder(z)
+        obs_agent_history, obs_wrist_history, state_history, task_embedding_history = obs_history
+        batch_size, time_step = obs_agent_history.shape[0], obs_agent_history.shape[1]
+        ### shape: (batch_size, timestep, 3, 128, 128)
+        task_embedding_history = torch.torch.as_tensor(task_embedding_history, device=self.device)
+        task_embedding_history = task_embedding_history.reshape(-1, task_embedding_history.shape[-1])
         
+        obs_agent_history = torch.torch.as_tensor(obs_agent_history, device=self.device)
+        obs_agent_history = obs_agent_history.reshape(-1, 3, 128, 128)
+        z_agent_history   = self.encoders[0](self.aug(obs_agent_history.float()), langs=task_embedding_history)
+        
+        obs_wrist_history = torch.torch.as_tensor(obs_wrist_history, device=self.device)
+        obs_wrist_history = obs_wrist_history.reshape(-1, 3, 128, 128)
+        z_wrist_history   = self.encoders[1](self.aug(obs_wrist_history.float()), langs=task_embedding_history)
+        
+        state_history     = torch.torch.as_tensor(state_history, device=self.device)
+        state_history     = state_history.reshape(-1, state_history.shape[-1])
+        z_state_history   = self.encoders[2](state_history.float())
+        
+        z_task_embedding  = self.encoders[3](task_embedding_history)
+        
+        z_agent_history  = z_agent_history.reshape(batch_size, time_step, -1)
+        z_wrist_history  = z_wrist_history.reshape(batch_size, time_step, -1)
+        z_state_history  = z_state_history.reshape(batch_size, time_step, -1)
+        z_task_embedding = z_task_embedding.reshape(batch_size, time_step, -1)
+        
+        z_history = torch.concatenate([z_agent_history, z_wrist_history, z_state_history, z_task_embedding], dim=-1)
+        
+        positional_embedding = self.positional_embedding(z_history)
+        z_history += positional_embedding.to(self.device)
+        mask = nn.Transformer.generate_square_subsequent_mask(z_history.shape[1]).to(self.device)
+        z_history = self.TACO.module.transformer_embedding(z_history, mask=mask, src_key_padding_mask=pad_mask)
+        pad_idx = pad_idx.unsqueeze(-1).unsqueeze(-1)
+        pad_idx = pad_idx.expand(-1, -1, z_history.shape[2])
+        z_history = torch.gather(z_history, 1, pad_idx).squeeze(1)
+        
+        decode_action = self.TACO.module.decoder(z_history)
+        action = torch.torch.as_tensor(action, device=self.device)
         if self.decoder_type == 'deterministic':
             bc_loss = F.l1_loss(decode_action, action)
         elif self.decoder_type == 'gmm':

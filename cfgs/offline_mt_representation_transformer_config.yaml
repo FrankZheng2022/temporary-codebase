@@ -4,8 +4,9 @@ defaults:
   - override hydra/launcher: submitit_local
 
 #task_names: ['assembly', 'basketball'] # for testing
-data_storage_dir: /mount_point/offline-data-libero
-task_data_dir_suffix: _expert500
+libero_path: /fs/cml-projects/taco_rl/LIBERO
+data_storage_dir: /fs/cml-projects/taco_rl/offline_data_libero
+task_data_dir_suffix: _framestack1
 results_dir: /mount_point/taa_results
 downstream_task_name: none
 downstream_task_suite: libero_10
@@ -14,7 +15,7 @@ log_root_dir: exp_local
 
 
 split: 1
-max_traj_per_task: 100
+max_traj_per_task: 50
 
 alpha: 3
 load_snapshot: true

@@ -207,9 +207,13 @@ class TACORepresentation:
         return code_distance
             
     
-    def encode_obs(self, obs_agent, obs_wrist, state, task_embedding, add_task_embedding=True):
-        z_agent = self.encoders[0](self.aug(obs_agent.float()), langs=task_embedding)
-        z_wrist = self.encoders[1](self.aug(obs_wrist.float()), langs=task_embedding)
+    def encode_obs(self, obs_agent, obs_wrist, state, task_embedding, add_task_embedding=True, aug=True):
+        if aug:
+            z_agent = self.encoders[0](self.aug(obs_agent.float()), langs=task_embedding)
+            z_wrist = self.encoders[1](self.aug(obs_wrist.float()), langs=task_embedding)
+        else:
+            z_agent = self.encoders[0](obs_agent.float(), langs=task_embedding)
+            z_wrist = self.encoders[1](obs_wrist.float(), langs=task_embedding)
         state   = self.encoders[2](state.float())
         if add_task_embedding:
             task_embedding = self.encoders[3](task_embedding)

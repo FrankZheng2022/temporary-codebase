@@ -104,7 +104,8 @@ class Workspace:
             task_name = task.name
             self.eval_env = libero_wrapper.make(self.cfg.downstream_task_name, 
                                                 self.cfg.downstream_task_suite, seed=self.cfg.seed, 
-                                                frame_stack=self.cfg.frame_stack)
+                                                frame_stack=self.cfg.frame_stack,
+                                                libero_path=self.cfg.libero_path)
             self.eval_env.task_name = task_name
             self.eval_env.task_embedding = libero_wrapper.get_task_embedding(task.language)
 
@@ -511,7 +512,7 @@ class Workspace:
                 print(f"\nTraining for {self.global_step} steps of {self.cfg.batch_size}-sized batches has takes {time.time() - start_train_block_time}s (including eval time).")
                 if metrics is not None:
                     # log stats
-                    print('BC_LOSS:{}'.format(metrics['bc_loss']))
+                    print('BC_LOSS:{}'.format(metrics['bc_loss']), flush=True)
                     elapsed_time, total_time = self.timer.reset()
 
                 # reset env

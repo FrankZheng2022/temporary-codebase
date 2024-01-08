@@ -178,13 +178,13 @@ class LiberoWrapper(gym.Wrapper):
     def __getattr__(self, name):
         return getattr(self._env, name)
 
-def make(task_id, task_suite_name, seed=1, frame_stack=1, train=False, img_size=128, episode_length=500, device_id=-1):
+def make(task_id, task_suite_name, seed=1, frame_stack=1, train=False, img_size=128, episode_length=500, device_id=-1, libero_path="/fs/cml-projects/taco_rl/LIBERO"):
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[task_suite_name]()
     task = task_suite.get_task(task_id)
     task_name = task.name
     task_description = task.language
-    task_bddl_file = os.path.join("/fs/cml-projects/taco_rl/LIBERO/libero/libero/bddl_files", task.problem_folder, task.bddl_file)
+    task_bddl_file = os.path.join(f"{libero_path}/libero/libero/bddl_files", task.problem_folder, task.bddl_file)
     print(f"[info] retrieving task {task_id} from suite {task_suite_name}, the " + \
           f"language instruction is {task_description}")
 

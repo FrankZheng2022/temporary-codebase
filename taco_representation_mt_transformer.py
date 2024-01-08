@@ -57,10 +57,10 @@ class RelativePositionalEncoder(nn.Module):
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, x):
-        pos_seq = torch.arange(x.shape[1] - 1, -1, -1.0, device=x.device)
+        pos_seq = torch.arange(x.shape[1] - 1, -1, -1.0)
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)  # [N, NS/2] <- outer product
         pos_enc = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)  # [N, NS]
-        return pos_enc
+        return pos_enc.to(x.device)
 
 class RandomShiftsAug(nn.Module):
     def __init__(self, pad):
